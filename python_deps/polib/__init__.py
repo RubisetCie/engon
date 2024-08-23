@@ -30,39 +30,11 @@ if "asset_pack_bpy" not in locals():
         from . import snap_to_ground_bpy
         from . import spline_utils_bpy
         from . import split_file_reader
-        from . import telemetry_module_bpy as telemetry_native_module
         from . import ui_bpy
         from . import utils_bpy
 
         # singleton instance
         module_provider = module_install_utils_bpy.ModuleProvider()
-
-        def init_polygoniq_global():
-            global telemetry_module_bpy
-
-            if not hasattr(bpy, "polygoniq_global"):
-                bpy.polygoniq_global = {"telemetry": {}, "telemetry_module_bpy": {}}  # deprecated!
-
-            if "telemetry_module_bpy" not in bpy.polygoniq_global:
-                bpy.polygoniq_global["telemetry_module_bpy"] = {}
-
-            # another polygoniq addon might have already initialized telemetry!
-            # we want to use just one instance unless it's a different API version
-            if telemetry_native_module.API_VERSION in bpy.polygoniq_global["telemetry_module_bpy"]:
-                telemetry_module_bpy = bpy.polygoniq_global["telemetry_module_bpy"][
-                    telemetry_native_module.API_VERSION
-                ]
-            else:
-                telemetry_module_bpy = telemetry_native_module
-                bpy.polygoniq_global["telemetry_module_bpy"][
-                    telemetry_native_module.API_VERSION
-                ] = telemetry_module_bpy
-                telemetry_module_bpy.bootstrap_telemetry()
-
-        init_polygoniq_global()
-
-        def get_telemetry(product: str):
-            return telemetry_module_bpy.get_telemetry(product)
 
     except ImportError as e:
         if e.name != "bpy":
@@ -90,7 +62,6 @@ if "asset_pack_bpy" not in locals():
         snap_to_ground_bpy = types.ModuleType("snap_to_ground_bpy")
         spline_utils_bpy = types.ModuleType("spline_utils_bpy")
         split_file_reader = types.ModuleType("split_file_reader")
-        telemetry_native_module = types.ModuleType("telemetry_native_module")
         ui_bpy = types.ModuleType("ui_bpy")
         utils_bpy = types.ModuleType("utils_bpy")
 
@@ -116,7 +87,6 @@ else:
         snap_to_ground_bpy = importlib.reload(snap_to_ground_bpy)
         spline_utils_bpy = importlib.reload(spline_utils_bpy)
         split_file_reader = importlib.reload(split_file_reader)
-        telemetry_native_module = importlib.reload(telemetry_native_module)
         ui_bpy = importlib.reload(ui_bpy)
         utils_bpy = importlib.reload(utils_bpy)
     except ImportError:
@@ -145,7 +115,6 @@ __all__ = [
     "color_utils",
     "bl_info_utils",
     "geonodes_mod_utils_bpy",
-    "get_telemetry",
     "installation_utils_bpy",
     "linalg_bpy",
     "log_helpers_bpy",
@@ -159,7 +128,6 @@ __all__ = [
     "snap_to_ground_bpy",
     "spline_utils_bpy",
     "split_file_reader",
-    # telemetry_module_bpy intentionally missing, you should interact with it via get_telemetry
     "ui_bpy",
     "utils_bpy",
 ]

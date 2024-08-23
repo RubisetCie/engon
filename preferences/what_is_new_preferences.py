@@ -19,7 +19,7 @@ MODULE_CLASSES.append(SeenAssetPackVersion)
 class WhatIsNewPreferences(bpy.types.PropertyGroup):
     display_what_is_new: bpy.props.BoolProperty(
         name="Display \"See What's New\" button",
-        description="Show button in the engon browser to filter for newly added asset after updating an asset pack."
+        description="Show button in the Engon browser to filter for newly added asset after updating an asset pack."
         "These only displays if there is a newly updated asset pack that wasn't explored before",
         default=True,
     )

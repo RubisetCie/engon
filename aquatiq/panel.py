@@ -41,7 +41,7 @@ MODULE_CLASSES: typing.List[typing.Type] = []
 class AquatiqPanelInfoMixin:
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "polygoniq"
+    bl_category = "Engon"
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -87,7 +87,7 @@ class RiverGeneratorPanelMixin(
 @polib.log_helpers_bpy.logged_panel
 class AquatiqPanel(AquatiqPanelInfoMixin, bpy.types.Panel):
     bl_idname = "VIEW_3D_PT_engon_aquatiq"
-    bl_label = "aquatiq"
+    bl_label = "Aquatiq"
     bl_order = 10
     bl_options = {'DEFAULT_CLOSED'}
 

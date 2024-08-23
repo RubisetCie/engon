@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 id = "engon"
 version = "1.2.1"
-name = "engon"
+name = "Engon"
 tagline = "Browse assets, filter and sort them, scatter, animate, manipulate rigs"
 maintainer = "polygoniq <ahoy@polygoniq.com>"
 type = "add-on"
@@ -16,5 +16,5 @@ license = [
   "SPDX:GPL-3.0-or-later",
 ]
 copyright = [
-  "2018- polygoniq xyz s.r.o",
+  "2018 - Polygoniq XYZ S.R.O",
 ]

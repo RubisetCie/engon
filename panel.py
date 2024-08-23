@@ -40,7 +40,7 @@ logger = logging.getLogger(f"polygoniq.{__name__}")
 class EngonPanelMixin:
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "polygoniq"
+    bl_category = "Engon"
 
 
 MODULE_CLASSES: typing.List[typing.Any] = []
@@ -367,8 +367,8 @@ MODULE_CLASSES.append(SpreadObjects)
 @polib.log_helpers_bpy.logged_panel
 class EngonPanel(EngonPanelMixin, bpy.types.Panel):
     bl_idname = "VIEW_3D_PT_engon"
-    bl_label = "engon"
-    bl_category = "polygoniq"
+    bl_label = "Engon"
+    bl_category = "Engon"
     bl_order = 0
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'

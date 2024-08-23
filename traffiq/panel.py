@@ -83,7 +83,7 @@ MODULE_CLASSES.append(SetColorToRandom)
 class TraffiqPanelInfoMixin:
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "polygoniq"
+    bl_category = "Engon"
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -93,7 +93,7 @@ class TraffiqPanelInfoMixin:
 @polib.log_helpers_bpy.logged_panel
 class TraffiqPanel(TraffiqPanelInfoMixin, bpy.types.Panel):
     bl_idname = "VIEW_3D_PT_engon_traffiq"
-    bl_label = "traffiq"
+    bl_label = "Traffiq"
     bl_order = 10
     bl_options = {'DEFAULT_CLOSED'}
 

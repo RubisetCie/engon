@@ -155,7 +155,7 @@ class MakeSelectionLinked(bpy.types.Operator):
     bl_label = "Convert to Linked"
     bl_description = (
         "Converts selected objects to their linked variants from "
-        "engon asset packs. WARNING: This operation removes "
+        "Engon asset packs. WARNING: This operation removes "
         "all local changes. Doesn't work on particle systems, "
         "only polygoniq assets are supported by this operator"
     )

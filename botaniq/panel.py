@@ -129,7 +129,7 @@ MODULE_CLASSES.append(RandomizeFloatProperty)
 class BotaniqPanelInfoMixin:
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "polygoniq"
+    bl_category = "Engon"
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -139,7 +139,7 @@ class BotaniqPanelInfoMixin:
 @polib.log_helpers_bpy.logged_panel
 class BotaniqPanel(BotaniqPanelInfoMixin, bpy.types.Panel):
     bl_idname = "VIEW_3D_PT_engon_botaniq"
-    bl_label = "botaniq"
+    bl_label = "Botaniq"
     bl_order = 10
     bl_options = {'DEFAULT_CLOSED'}
 

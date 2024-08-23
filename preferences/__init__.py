@@ -18,8 +18,6 @@
 #
 # ##### END GPL LICENSE BLOCK #####
 
-from .. import addon_updater
-from .. import addon_updater_ops
 import bpy
 import bpy_extras
 import typing
@@ -41,9 +39,6 @@ from .. import keymaps
 from .. import ui_utils
 from .. import polib
 from .. import __package__ as base_package
-
-
-telemetry = polib.get_telemetry("engon")
 
 
 MODULE_CLASSES: typing.List[typing.Any] = []
@@ -69,44 +64,8 @@ MODULE_CLASSES.append(ShowReleaseNotes)
 
 
 @polib.log_helpers_bpy.logged_preferences
-@addon_updater_ops.make_annotations
 class Preferences(bpy.types.AddonPreferences):
     bl_idname = base_package
-
-    # Addon updater preferences.
-    auto_check_update: bpy.props.BoolProperty(
-        name="Auto-check for Update",
-        description="If enabled, auto-check for updates using an interval",
-        default=True,
-    )
-
-    updater_interval_months: bpy.props.IntProperty(
-        name='Months', description="Number of months between checking for updates", default=0, min=0
-    )
-
-    updater_interval_days: bpy.props.IntProperty(
-        name='Days',
-        description="Number of days between checking for updates",
-        default=7,
-        min=0,
-        max=31,
-    )
-
-    updater_interval_hours: bpy.props.IntProperty(
-        name='Hours',
-        description="Number of hours between checking for updates",
-        default=0,
-        min=0,
-        max=23,
-    )
-
-    updater_interval_minutes: bpy.props.IntProperty(
-        name='Minutes',
-        description="Number of minutes between checking for updates",
-        default=0,
-        min=0,
-        max=59,
-    )
 
     general_preferences: bpy.props.PointerProperty(
         name="General Preferences",
@@ -145,7 +104,7 @@ class Preferences(bpy.types.AddonPreferences):
     )
 
     first_time_register: bpy.props.BoolProperty(
-        description="Gets set to False when engon gets registered for the first time "
+        description="Gets set to False when Engon gets registered for the first time "
         "or when registered after being unregistered",
         default=True,
     )
@@ -158,12 +117,10 @@ class Preferences(bpy.types.AddonPreferences):
 
     show_keymaps: bpy.props.BoolProperty(description="Show/Hide Keymaps", default=False)
 
-    show_updater_settings: bpy.props.BoolProperty(description="Show/Hide Updater", default=False)
-
     save_prefs: bpy.props.BoolProperty(
         name="Auto-Save Preferences",
         description="Automatically saves Preferences after running operators "
-        "(e.g. Install Asset Pack) that change engon preferences",
+        "(e.g. Install Asset Pack) that change Engon preferences",
         default=True,
     )
 
@@ -202,16 +159,6 @@ class Preferences(bpy.types.AddonPreferences):
             functools.partial(keymaps.draw_settings_ui, context),
         )
 
-        if bpy.app.version < (4, 2, 0) or (bpy.app.version >= (4, 2, 0) and bpy.app.online_access):
-            # Update Settings section
-            polib.ui_bpy.collapsible_box(
-                col,
-                self,
-                "show_updater_settings",
-                "Updates",
-                functools.partial(self.draw_update_settings, context),
-            )
-
         box = col.box()
 
         # Misc preferences
@@ -224,25 +171,6 @@ class Preferences(bpy.types.AddonPreferences):
 
         polib.ui_bpy.draw_settings_footer(self.layout)
 
-    def draw_update_settings(self, context: bpy.types.Context, layout: bpy.types.UILayout) -> None:
-        col = layout.column()
-        addon_updater_ops.update_settings_ui(self, context, col)
-        split = col.split(factor=0.5)
-        left_row = split.row()
-        left_row.enabled = bool(addon_updater.Updater.update_ready)
-        left_row.operator(
-            ShowReleaseNotes.bl_idname, text="Latest Release Notes", icon='PRESET_NEW'
-        ).release_tag = ""
-        right_row = split.row()
-        # TODO: Broken 4.2
-        if addon_updater.Updater.current_version is not None:
-            current_release_tag = polib.utils_bpy.get_release_tag_from_version(
-                addon_updater.Updater.current_version
-            )
-            right_row.operator(
-                ShowReleaseNotes.bl_idname, text="Current Release Notes", icon='PRESET'
-            ).release_tag = current_release_tag
-
     def draw_save_userpref_prompt(self, layout: bpy.types.UILayout):
         row = layout.row()
         row.prop(self, "save_prefs")
@@ -251,9 +179,9 @@ class Preferences(bpy.types.AddonPreferences):
         op = row.operator(ui_utils.ShowPopup.bl_idname, text="", icon='INFO')
         op.message = (
             "Automatically saves preferences after running operators "
-            "(e.g. Install Asset Pack) that change engon preferences. \n"
+            "(e.g. Install Asset Pack) that change Engon preferences. \n"
             "If you do not save preferences after running these operators, "
-            "you might lose important engon data, for example, \n"
+            "you might lose important Engon data, for example, \n"
             "your installed Asset Packs might not load properly the next time you open Blender."
         )
         op.title = "Auto-Save Preferences"
@@ -271,7 +199,7 @@ class PackLogs(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        packed_logs_directory_path = polib.log_helpers_bpy.pack_logs(telemetry)
+        packed_logs_directory_path = polib.log_helpers_bpy.pack_logs()
         polib.utils_bpy.xdg_open_file(packed_logs_directory_path)
         return {'FINISHED'}
 

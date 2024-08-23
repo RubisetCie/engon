@@ -251,10 +251,6 @@ class GeneralPreferences(bpy.types.PropertyGroup):
                     text=f"engon {'.'.join(map(str, pack.min_engon_version))} or newer is recommended for this Asset Pack!",
                     icon='ERROR',
                 )
-                col.label(
-                    text="Some features might not work correctly, please update engon in the "
-                    "'Updates' section.",
-                )
 
     def draw_pack_info_search_paths(
         self, context: bpy.types.Context, layout: bpy.types.UILayout

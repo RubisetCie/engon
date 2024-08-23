@@ -1028,7 +1028,7 @@ MODULE_CLASSES.append(DynamicFilters)
 class MAPR_BrowserResetFilter(bpy.types.Operator):
     bl_idname = "engon.browser_reset_filter"
     bl_label = "Reset Filter"
-    bl_description = "Resets all or a selected filter in engon browser"
+    bl_description = "Resets all or a selected filter in Engon browser"
 
     filter_name: bpy.props.StringProperty()
     reset_all: bpy.props.BoolProperty(default=False)

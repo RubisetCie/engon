@@ -55,7 +55,7 @@ MAPPING_INPUT_THRESHOLDS = {'UV': (0, 1 / 3), 'OBJECT': (1 / 3, 2 / 3), 'WORLD':
 class MaterialiqPanelMixin:
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "polygoniq"
+    bl_category = "Engon"
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -91,8 +91,8 @@ class MaterialiqWorldsPanelMixin:
 @polib.log_helpers_bpy.logged_panel
 class MaterialiqPanel(MaterialiqPanelMixin, bpy.types.Panel):
     bl_idname = "VIEW_3D_PT_engon_materialiq"
-    bl_label = "materialiq"
-    bl_category = "polygoniq"
+    bl_label = "Materialiq"
+    bl_category = "Engon"
     bl_order = 10
     bl_options = {'DEFAULT_CLOSED'}
 

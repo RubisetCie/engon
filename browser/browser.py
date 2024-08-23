@@ -305,7 +305,7 @@ def draw_asset_previews(
         col.separator()
         row = col.row()
         row.alignment = 'CENTER'
-        row.label(text="Click the button bellow to install Asset Packs in engon preferences.")
+        row.label(text="Click the button bellow to install Asset Packs in Engon preferences.")
 
         col.separator()
         row = col.row()
@@ -376,7 +376,7 @@ def prefs_navbar_draw(self, context: bpy.types.Context) -> None:
 
     row = layout.row(align=True)
     row.label(
-        text="engon browser",
+        text="Engon Browser",
         icon_value=polib.ui_bpy.icon_manager.get_polygoniq_addon_icon_id("engon"),
     )
 
@@ -458,10 +458,10 @@ def _prefs_content_draw_override(self, context: bpy.types.Context) -> None:
 class MAPR_EnsureCorrectActivePrefSection(bpy.types.Operator):
     bl_idname = "engon.ensure_correct_active_perf_section"
     bl_description = (
-        "After opening preferences and changing the section, the engon browser might "
+        "After opening preferences and changing the section, the Engon browser might "
         "look unusual. This fixes the issue by changing to the 'ADDONS' section"
     )
-    bl_label = "Fix engon Browser Layout"
+    bl_label = "Fix Engon Browser Layout"
 
     def execute(self, context: bpy.types.Context):
         context.preferences.active_section = 'ADDONS'
@@ -474,8 +474,8 @@ MODULE_CLASSES.append(MAPR_EnsureCorrectActivePrefSection)
 @polib.log_helpers_bpy.logged_operator
 class MAPR_BrowserOpen(bpy.types.Operator):
     bl_idname = "engon.browser_open"
-    bl_description = "Opens engon asset browser in a new window"
-    bl_label = "Open engon Asset Browser"
+    bl_description = "Opens Engon asset browser in a new window"
+    bl_label = "Open Engon Asset Browser"
 
     # We store previous draw functions as class properties to be returned in
     # MAPR_ReturnPreferences
@@ -484,7 +484,7 @@ class MAPR_BrowserOpen(bpy.types.Operator):
     is_browser_override_correct: bpy.props.BoolProperty(
         options={'HIDDEN'},
         description="When user changes the active section in preferences to an incompatible one, "
-        "the engon browser might appear incorrect and this property will be set to false",
+        "the Engon browser might appear incorrect and this property will be set to false",
         default=True,
     )
 
@@ -561,7 +561,7 @@ class MAPR_BrowserChooseArea(bpy.types.Operator):
     # Operator based on Set Origin operator in ScreenCastKeys from nutti,
     # available at https://github.com/nutti/Screencast-Keys/
     bl_idname = "engon.browser_choose_area"
-    bl_description = "Click on a selected area to open engon asset browser there"
+    bl_description = "Click on a selected area to open Engon asset browser there"
     bl_label = "Choose Browser Area"
 
     handlers: typing.Dict[typing.Tuple[bpy.types.Space, str], typing.Callable] = {}
@@ -638,7 +638,7 @@ MODULE_CLASSES.append(MAPR_BrowserChooseArea)
 @polib.log_helpers_bpy.logged_operator
 class MAPR_BrowserClose(bpy.types.Operator):
     bl_idname = "engon.browser_close"
-    bl_description = "Switches back from polygoniq browser to the original editor type"
+    bl_description = "Switches back from Engon browser to the original editor type"
     bl_label = "Close Browser"
 
     @staticmethod
@@ -683,10 +683,10 @@ MODULE_CLASSES.append(MAPR_BrowserClose)
 class MAPR_BrowserToggleArea(bpy.types.Operator):
     bl_idname = "engon.browser_toggle_area"
     bl_description = (
-        "Toggles area under mouse to engon browser and back. If the previous area "
+        "Toggles area under mouse to Engon browser and back. If the previous area "
         "contained preferences, this does nothing"
     )
-    bl_label = "Toggle engon Browser"
+    bl_label = "Toggle Engon Browser"
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
@@ -734,7 +734,7 @@ MODULE_CLASSES.append(MAPR_BrowserToggleArea)
 @polib.log_helpers_bpy.logged_operator
 class MAPR_BrowserOpenAssetPacksPreferences(bpy.types.Operator):
     bl_idname = "engon.browser_open_asset_packs_preferences"
-    bl_description = "Opens engon preferences with the Asset Packs section opened"
+    bl_description = "Opens Engon preferences with the Asset Packs section opened"
     bl_label = "Open Preferences"
 
     def execute(self, context: bpy.types.Context):
@@ -743,7 +743,6 @@ class MAPR_BrowserOpenAssetPacksPreferences(bpy.types.Operator):
         gen_prefs.show_asset_packs = True
         gen_prefs.show_pack_info_paths = False
         gen_prefs.show_keymaps = False
-        gen_prefs.show_updater_settings = False
         return {'FINISHED'}
 
 

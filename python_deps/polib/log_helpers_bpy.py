@@ -9,7 +9,6 @@ import time
 import logging
 import os
 import shutil
-from . import telemetry_module_bpy
 
 
 def logged_operator(cls: typing.Type[bpy.types.Operator]):
@@ -140,13 +139,11 @@ def logged_preferences(cls: typing.Type[bpy.types.AddonPreferences]):
     return cls
 
 
-def pack_logs(telemetry: telemetry_module_bpy.TelemetryWrapper) -> str:
+def pack_logs() -> str:
     """Pack all logs into zip, create new timestamped directory in tempdir and save the zip there."""
     temp_folder = tempfile.gettempdir()
     log_path = os.path.join(temp_folder, "polygoniq_logs")
     os.makedirs(log_path, exist_ok=True)
-    with open(os.path.join(log_path, "latest_telemetry.txt"), "w") as f:
-        f.write(telemetry.dump())
     now = datetime.datetime.now()
     output_folder_name = f"polygoniq_logs--{now.year:04d}-{now.month:02d}-{now.day:02d}T{now.hour:02d}-{now.minute:02d}-{now.second:02d}"
     output_folder_path = os.path.join(temp_folder, output_folder_name)

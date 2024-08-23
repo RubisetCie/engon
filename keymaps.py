@@ -41,7 +41,7 @@ KeymapItemDefinition = collections.namedtuple(
 KEYMAP_DEFINITIONS: typing.Dict[KeymapDefinition, typing.List[KeymapItemDefinition]] = {
     KeymapDefinition('Window', 'EMPTY', 'WINDOW'): [
         KeymapItemDefinition(
-            "Toggle engon Browser", "engon.browser_toggle_area", 'E', 'PRESS', False, False, False
+            "Toggle Engon Browser", "engon.browser_toggle_area", 'E', 'PRESS', False, False, False
         ),
     ]
 }

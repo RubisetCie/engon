@@ -18,7 +18,6 @@
 #
 # ##### END GPL LICENSE BLOCK #####
 
-from . import addon_updater_ops
 import bpy
 import os
 import sys
@@ -36,9 +35,9 @@ if not getattr(root_logger, "polygoniq_initialized", False):
         "%H:%M:%S",
     )
     try:
-        root_logger.setLevel(int(os.environ.get("POLYGONIQ_LOG_LEVEL", "20")))
+        root_logger.setLevel(int(os.environ.get("POLYGONIQ_LOG_LEVEL", "0")))
     except (ValueError, TypeError):
-        root_logger.setLevel(20)
+        root_logger.setLevel(0)
     root_logger.propagate = False
     root_logger_stream_handler = logging.StreamHandler()
     root_logger_stream_handler.setFormatter(root_logger_formatter)
@@ -128,20 +127,16 @@ finally:
         sys.path.remove(ADDITIONAL_DEPS_DIR)
 
 bl_info = {
-    "name": "engon",
-    "author": "polygoniq xyz s.r.o.",
+    "name": "Engon",
+    "author": "Polygoniq XYZ S.R.O.",
     "version": (1, 2, 1),  # bump doc_url and version in register as well!
     "blender": (3, 3, 0),
-    "location": "polygoniq tab in the sidebar of the 3D View window",
-    "description": "",
+    "location": "Engon tab in the sidebar of the 3D View window",
+    "description": "Browse assets, filter and sort them, scatter, animate, manipulate rigs",
     "category": "Object",
     "doc_url": "https://docs.polygoniq.com/engon/1.2.1/",
     "tracker_url": "https://polygoniq.com/discord/",
 }
-
-
-telemetry = polib.get_telemetry("engon")
-telemetry.report_addon(bl_info, __file__)
 
 
 def _post_register():
@@ -154,10 +149,6 @@ def _post_register():
 
 
 def register():
-    # We pass mock "bl_info" to the updater, as from Blender 4.2.0, the "bl_info" is
-    # no longer available in this scope.
-    addon_updater_ops.register({"version": (1, 2, 1)})
-
     ui_utils.register()
     pack_info_search_paths.register()
     preferences.register()
@@ -203,8 +194,6 @@ def unregister():
     for module_name in list(sys.modules.keys()):
         if module_name.startswith(__package__):
             del sys.modules[module_name]
-
-    addon_updater_ops.unregister()
 
     # We clear the master 'polib' icon manager to prevent ResourceWarning and leaks.
     # If other addons uses the icon_manager, the previews will be reloaded on demand.
