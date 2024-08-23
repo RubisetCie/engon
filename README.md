@@ -5,7 +5,7 @@
 </h1>
 
 <div align="center">
-  engon
+  Engon
   <br />
   <a href="#about"><strong>Check out the screenshots »</strong></a>
   <br />
@@ -52,7 +52,7 @@
 
 ## About
 
-> engon is a small code-only addon that contains all asset addon functionality: spawning, variants,
+> Engon is a small code-only addon that contains all asset addon functionality: spawning, variants,
 > find missing files, snap to > ground, animations, ... All the former addon functionality: botaniq
 > scatter, ... in one big addon containing all the code. That way we can ship bug fixes and add
 > even more functionality very quickly. And you can auto-update without downloading tens of GB of
@@ -93,13 +93,13 @@ how to set it up as remote repository so you can install and update everything f
 
 Go to `Edit` -> `Preferences`. And select `Add-ons` in the left bar. Click the `Install...` button
 in the top section. Select the ZIP file you just downloaded and click `Install Add-on`. After the
-installation finishes, check the checkbox next to the `engon` addon.
+installation finishes, check the checkbox next to the `Engon` addon.
 
 ### Updating
 
 The addon can auto-update itself to latest stable or even unstable master version. Head over to
-`Edit` -> `Preferences` and select `Add-ons` in the left bar. Type `engon` into the search bar
-and then expand the addon section of `engon`. Scroll down to the auto update section to set up
+`Edit` -> `Preferences` and select `Add-ons` in the left bar. Type `Engon` into the search bar
+and then expand the addon section of `Engon`. Scroll down to the auto update section to set up
 update intervals or even update manually.
 
 ## Roadmap
@@ -117,15 +117,6 @@ Reach out to the maintainers at one of the following places:
 - Joining our [Discord community](https://polygoniq.com/discord/) for the fastest support.
 - [GitHub issues](https://github.com/polygoniq/engon/issues/new?assignees=&labels=question&template=04_SUPPORT_QUESTION.md&title=support%3A+)
 - Contact options listed on [this GitHub profile](https://github.com/polygoniq)
-
-## Project assistance
-
-If you want to say **thank you** or/and support active development of engon:
-
-- Add a [GitHub Star](https://github.com/polygoniq/engon) to the project.
-- Tweet about engon.
-
-Together, we can make engon **better**!
 
 ## Contributing
 
