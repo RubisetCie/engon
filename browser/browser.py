@@ -20,7 +20,10 @@
 
 import bpy
 import gpu
+import os
+import shutil
 import typing
+import logging
 from .. import mapr
 from .. import polib
 from . import filters
@@ -34,11 +37,15 @@ from .. import preferences
 from .. import asset_registry
 from .. import __package__ as base_package
 
+logger = logging.getLogger(f"polygoniq.{__name__}")
+
 
 MODULE_CLASSES: typing.List[typing.Any] = []
 IS_KNOWN_BROWSER = "pq_is_known_browser"
 IS_KNOWN_BROWSER_POPUP = "pq_is_known_browser_popup"
-
+# Path where Blender stores thumbnails that failed to load, this can happen e. g. when the source file
+# cannot be further read after opened and isn't considered valid image.
+FAILED_THUMBNAILS_PATH = os.path.expanduser(os.path.join("~", ".thumbnails", "fail", "blender"))
 
 # Sets of asset ids that were introduced prior to the introduction of the 'Drawable' tag in engon
 # 1.1.0. The tag is used to decide whether to display the draw button. We don't know based
@@ -81,7 +88,7 @@ _MSGBUS_OWNER = object()
 
 @polib.log_helpers_bpy.logged_panel
 class MAPR_BrowserPreferencesPopoverPanel(bpy.types.Panel):
-    bl_idname = "PREFERENCES_PT_mapr_preferences"
+    bl_idname = "PREFERENCES_PT_browser_preferences"
     bl_label = "Preferences"
     bl_space_type = 'PREFERENCES'
     bl_region_type = 'HEADER'
@@ -90,7 +97,6 @@ class MAPR_BrowserPreferencesPopoverPanel(bpy.types.Panel):
         col = layout.column()
         col.operator(dev.MAPR_BrowserDeleteCache.bl_idname)
         col.operator(dev.MAPR_BrowserReconstructFilters.bl_idname)
-        col.operator(dev.MAPR_BrowserReloadPreviews.bl_idname)
         col.separator()
         col.label(text="Asset Providers:")
         sub_col = col.column(align=True)
@@ -114,10 +120,14 @@ class MAPR_BrowserPreferencesPopoverPanel(bpy.types.Panel):
 
     def draw(self, context: bpy.types.Context):
         layout = self.layout
-        prefs = preferences.prefs_utils.get_preferences(context).mapr_preferences
-        layout.prop(prefs, "search_history_count")
-        layout.prop(prefs, "use_pills_nav")
-        layout.prop(prefs, "debug")
+        prefs = preferences.prefs_utils.get_preferences(context).browser_preferences
+        col = layout.column()
+        col.prop(prefs, "search_history_count")
+        col.prop(prefs, "use_pills_nav")
+        col.separator()
+        col.operator(MAPR_BrowserReloadPreviews.bl_idname, icon='FILE_REFRESH')
+        col.separator()
+        col.prop(prefs, "debug")
         if prefs.debug:
             self.draw_debug_info(layout, context)
 
@@ -126,9 +136,55 @@ MODULE_CLASSES.append(MAPR_BrowserPreferencesPopoverPanel)
 
 
 @polib.log_helpers_bpy.logged_operator
-class MAPR_ShowAssetDetail(bpy.types.Operator):
+class MAPR_BrowserReloadPreviews(bpy.types.Operator):
+    bl_idname = "engon.browser_reload_previews"
+    bl_label = "Reload Previews"
+    bl_description = (
+        f"Deletes the {FAILED_THUMBNAILS_PATH} directory and forces asset previews to reload"
+    )
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        col = layout.column(align=True)
+        col.label(
+            text="This will delete the following directory to force Blender to reload previews"
+        )
+        col.label(text=f"{FAILED_THUMBNAILS_PATH}")
+
+        layout.label(text="Are you sure you want to continue?")
+
+        row = layout.row()
+        row.enabled = False
+        row.label(text="Restart Blender if previews are stuck afterwards.")
+
+    def execute(self, context: bpy.types.Context):
+        # Blender caches thumbnails that failed to load in the following directory. Blender reloads
+        # the directory, if the source file for the previews changes. We remove the directory to
+        # force Blender to reload the previews even without changes.
+        if os.path.isdir(FAILED_THUMBNAILS_PATH):
+            logger.info(f"Removing the failed thumbnails path '{FAILED_THUMBNAILS_PATH}'")
+            shutil.rmtree(FAILED_THUMBNAILS_PATH, ignore_errors=True)
+
+        previews.preview_manager.clear()
+        polib.ui_bpy.tag_areas_redraw(context, {'PREFERENCES'})
+        return {'FINISHED'}
+
+    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+        # In case of popup we want the user to confirm the deletion of the folder.
+        if os.path.isdir(FAILED_THUMBNAILS_PATH):
+            return context.window_manager.invoke_props_dialog(self, width=500)
+        else:
+            return self.execute(context)
+
+
+MODULE_CLASSES.append(MAPR_BrowserReloadPreviews)
+
+
+@polib.log_helpers_bpy.logged_operator
+class MAPR_BrowserShowAssetDetail(bpy.types.Operator):
     bl_idname = "engon.browser_show_asset_detail"
     bl_label = "Show Asset Detail"
+    bl_description = "Shows detailed information about the asset - its preview, tags and parameters"
 
     asset_id: bpy.props.StringProperty(
         name="Asset ID", description="ID of asset to spawn into scene", options={'HIDDEN'}
@@ -149,7 +205,7 @@ class MAPR_ShowAssetDetail(bpy.types.Operator):
             heading.label(text="No parameters found")
             return
 
-        heading.label(text="Parameters")
+        heading.label(text="Parameters", icon='PROPERTIES')
         already_considered_parameters: typing.Set[str] = set()
         for i, (group_name, group_parameters) in enumerate(
             mapr.known_metadata.PARAMETER_GROUPING.items()
@@ -208,16 +264,18 @@ class MAPR_ShowAssetDetail(bpy.types.Operator):
 
         box = layout.box()
         title = box.row()
-        title.label(text=f"{self.asset.title}")
+        title.label(
+            text=f"{self.asset.title}", icon=utils.get_icon_of_asset_data_type(self.asset.type_)
+        )
         layout.template_icon(previews.preview_manager.get_icon_id(self.asset.id_), scale=12.0)
         box = layout.box()
         heading = box.row()
         heading.enabled = False
         if len(self.asset.tags) > 0:
-            heading.label(text="Tags")
-            row = box.row()
+            heading.label(text="Tags", icon='COLOR')
+            col = box.column()
             for tag in sorted(self.asset.tags):
-                row.label(text=tag)
+                col.label(text=tag)
         else:
             heading.label(text="No tags found")
 
@@ -227,6 +285,18 @@ class MAPR_ShowAssetDetail(bpy.types.Operator):
         row.enabled = False
         row.label(text=f"Asset ID: {self.asset.id_}")
 
+        prefs = preferences.prefs_utils.get_preferences(context).browser_preferences
+        if prefs.debug:
+            layout.separator()
+            box = layout.box()
+            box.label(
+                text=f"Search score: {mapr.filters.SEARCH_ASSET_SCORE.get(self.asset.id_, 'n/a')}"
+            )
+            box.label(text=f"Search matter (DEBUG)")
+            col = box.column(align=True)
+            for token, weight in self.asset.search_matter.items():
+                col.label(text=f"{token}: {weight}")
+
     def execute(self, context: bpy.types.Context):
         return {'FINISHED'}
 
@@ -235,7 +305,73 @@ class MAPR_ShowAssetDetail(bpy.types.Operator):
         return context.window_manager.invoke_popup(self)
 
 
-MODULE_CLASSES.append(MAPR_ShowAssetDetail)
+MODULE_CLASSES.append(MAPR_BrowserShowAssetDetail)
+
+
+@polib.log_helpers_bpy.logged_operator
+class MAPR_ShowAssetMenu(bpy.types.Operator):
+    bl_idname = "engon.browser_show_asset_menu"
+    bl_label = "Asset Menu"
+    bl_description = (
+        "Opens asset menu with additional actions for the asset. This contains less common "
+        "operations like drawing, spawning into particles, replacing selected or viewing asset detail"
+    )
+
+    asset_id: bpy.props.StringProperty(
+        name="Asset ID", description="ID of asset", options={'HIDDEN'}
+    )
+
+    # Reference to the asset the menu will be drawn with, has to be set before the menu is drawn.
+    current_asset: typing.Optional[mapr.asset.Asset] = None
+
+    @staticmethod
+    def asset_menu_draw(menu_self, context: bpy.types.Context) -> None:
+        layout: bpy.types.UILayout = menu_self.layout
+        asset = MAPR_ShowAssetMenu.current_asset
+        assert asset is not None, "Asset has to be set before drawing the menu"
+
+        col = layout.column(align=True)
+        if asset.type_ in {
+            mapr.asset_data.AssetDataType.blender_model,
+            mapr.asset_data.AssetDataType.blender_geometry_nodes,
+        }:
+            col.operator(
+                spawn.MAPR_BrowserReplaceSelected.bl_idname, icon='FILE_REFRESH'
+            ).asset_id = asset.id_
+
+        if (
+            asset.type_ == mapr.asset_data.AssetDataType.blender_model
+            and spawn.MAPR_BrowserSpawnModelIntoParticleSystem.poll(context)
+        ):
+            col.operator(
+                spawn.MAPR_BrowserSpawnModelIntoParticleSystem.bl_idname, icon='PARTICLES'
+            ).asset_id = asset.id_
+
+        if "Drawable" in asset.tags or asset.id_ in DRAWABLE_GEONODES_ASSET_IDS:
+            col.operator(
+                spawn.MAPR_BrowserDrawGeometryNodesAsset.bl_idname, icon='GREASEPENCIL'
+            ).asset_id = asset.id_
+
+        row = col.row()
+        row.operator_context = 'INVOKE_DEFAULT'
+        row.operator(MAPR_BrowserShowAssetDetail.bl_idname, icon='VIEWZOOM').asset_id = asset.id_
+
+    def execute(self, context: bpy.types.Context):
+        asset = asset_registry.instance.master_asset_provider.get_asset(self.asset_id)
+        if asset is None:
+            logger.error(f"Asset with ID '{self.asset_id}' not found! Cannot open asset menu.")
+            return {'CANCELLED'}
+
+        MAPR_ShowAssetMenu.current_asset = asset
+        context.window_manager.popup_menu(
+            MAPR_ShowAssetMenu.asset_menu_draw,
+            title=f"{asset.title}",
+            icon=utils.get_icon_of_asset_data_type(asset.type_),
+        )
+        return {'FINISHED'}
+
+
+MODULE_CLASSES.append(MAPR_ShowAssetMenu)
 
 
 def draw_asset_buttons_row(
@@ -259,39 +395,27 @@ def draw_asset_buttons_row(
         icon=utils.get_icon_of_asset_data_type(asset.type_),
     ).asset_id = str(asset.id_)
 
-    use_separator = False
-    if "Drawable" in asset.tags or asset.id_ in DRAWABLE_GEONODES_ASSET_IDS:
-        row.operator(
-            spawn.MAPR_BrowserDrawGeometryNodesAsset.bl_idname, text="", icon='GREASEPENCIL'
-        ).asset_id = str(asset.id_)
-        use_separator = True
+    row.operator(MAPR_ShowAssetMenu.bl_idname, text="", icon='DOWNARROW_HLT').asset_id = str(
+        asset.id_
+    )
 
-    if (
-        asset.type_ == mapr.asset_data.AssetDataType.blender_model
-        and spawn.MAPR_BrowserSpawnModelIntoParticleSystem.poll(context)
-    ):
-        row.operator(
-            spawn.MAPR_BrowserSpawnModelIntoParticleSystem.bl_idname, text="", icon='PARTICLES'
-        ).asset_id = str(asset.id_)
-        use_separator = True
-
-    if use_separator:
-        row.separator()
-
-    prefs = preferences.prefs_utils.get_preferences(context).mapr_preferences
+    prefs = preferences.prefs_utils.get_preferences(context).browser_preferences
     if prefs.debug and dev.IS_DEV:
         row.separator()
         row.operator(
             dev.MAPR_BrowserOpenAssetSourceBlend.bl_idname, text="", icon='HOME'
         ).asset_id = str(asset.id_)
 
-    row.operator(MAPR_ShowAssetDetail.bl_idname, text="", icon='VIEWZOOM').asset_id = str(asset.id_)
+    if prefs.debug:
+        row = layout.row()
+        row.enabled = False
+        row.label(text=f"Search score: {mapr.filters.SEARCH_ASSET_SCORE.get(asset.id_, 'n/a')}")
 
 
 def draw_asset_previews(
     context: bpy.types.Context,
     layout: bpy.types.UILayout,
-    mapr_prefs: preferences.mapr_preferences.MaprPreferences,
+    mapr_prefs: preferences.browser_preferences.BrowserPreferences,
 ) -> None:
     pm = previews.preview_manager
     assets = filters.asset_repository.current_assets
@@ -366,13 +490,13 @@ def prefs_content_draw(self, context: bpy.types.Context) -> None:
         row.alignment = 'CENTER'
         row.label(text="Loading...")
         return
-    prefs = preferences.prefs_utils.get_preferences(context).mapr_preferences
+    prefs = preferences.prefs_utils.get_preferences(context).browser_preferences
     draw_asset_previews(context, layout, prefs)
 
 
 def prefs_navbar_draw(self, context: bpy.types.Context) -> None:
     layout = self.layout
-    prefs = preferences.prefs_utils.get_preferences(context).mapr_preferences
+    prefs = preferences.prefs_utils.get_preferences(context).browser_preferences
 
     row = layout.row(align=True)
     row.label(
@@ -398,7 +522,7 @@ def prefs_navbar_draw(self, context: bpy.types.Context) -> None:
 
 def prefs_header_draw(self, context: bpy.types.Context) -> None:
     layout: bpy.types.UILayout = self.layout
-    prefs = preferences.prefs_utils.get_preferences(context).mapr_preferences
+    prefs = preferences.prefs_utils.get_preferences(context).browser_preferences
     layout.scale_x, layout.scale_y = 1, 1
     # draw EDITOR_TYPE selector
     layout.row().template_header()
@@ -414,6 +538,12 @@ def prefs_header_draw(self, context: bpy.types.Context) -> None:
     if not MAPR_BrowserOpen.is_browser_override_correct:
         sub = row.row(align=True)
         sub.operator(MAPR_EnsureCorrectActivePrefSection.bl_idname, icon='SHADERFX')
+
+    row.separator_spacer()
+    sub = row.row()
+    sub.enabled = False
+    current_assets_count = len(filters.asset_repository.current_assets)
+    sub.label(text=f"Browsing {current_assets_count} asset" + "s" * (current_assets_count != 1))
 
     row.separator_spacer()
     sub = row.row(align=True)
@@ -533,7 +663,7 @@ class MAPR_BrowserOpen(bpy.types.Operator):
             if _draw_funcs is not None:
                 userpref_type.draw._draw_funcs = _draw_funcs
 
-        utils.tag_prefs_redraw(context)
+        polib.ui_bpy.tag_areas_redraw(context, {'PREFERENCES'})
 
     @classmethod
     def open_browser(
@@ -542,7 +672,7 @@ class MAPR_BrowserOpen(bpy.types.Operator):
         cls.prev_area_ui_types[area] = area.ui_type
         window.screen[IS_KNOWN_BROWSER] = True
         area.ui_type = 'PREFERENCES'
-        preferences.prefs_utils.get_preferences(context).mapr_preferences.prefs_hijacked = True
+        preferences.prefs_utils.get_preferences(context).browser_preferences.prefs_hijacked = True
         # If the asset repository doesn't contain any view (it wasn't queried previously) we
         # query and reconstruct the filters manually within the root category.
         if filters.asset_repository.last_view is None:
@@ -646,6 +776,12 @@ class MAPR_BrowserClose(bpy.types.Operator):
         # We use the previously stored draw functions from MAPR_OpenBrowser. There can be other
         # addons overriding the functionality, so we return what was in the preferences before.
         for userpref_type_str, prev_draw in MAPR_BrowserOpen.USERPREF_prev_draw.items():
+            if not hasattr(bpy.types, userpref_type_str):
+                # Some classes with hijacked draw functions might not be available
+                # from the types module at some points
+                # Currently this problem happens only when Blender closes
+                # and the preferences were not returned prior to closing.
+                continue
             type_ = getattr(bpy.types, userpref_type_str)
             type_.draw = prev_draw
         MAPR_BrowserOpen.USERPREF_prev_draw.clear()
@@ -658,8 +794,10 @@ class MAPR_BrowserClose(bpy.types.Operator):
         MAPR_BrowserOpen.prev_area_ui_types.clear()
 
         if store_state_to_prefs:
-            preferences.prefs_utils.get_preferences(context).mapr_preferences.prefs_hijacked = False
-        utils.tag_prefs_redraw(context)
+            preferences.prefs_utils.get_preferences(context).browser_preferences.prefs_hijacked = (
+                False
+            )
+        polib.ui_bpy.tag_areas_redraw(context, {'PREFERENCES'})
 
     @staticmethod
     def abandon_window(window: bpy.types.Window) -> None:
@@ -752,7 +890,7 @@ MODULE_CLASSES.append(MAPR_BrowserOpenAssetPacksPreferences)
 def _active_object_changed():
     # We redraw the browser when active object changed, because some of the operators are
     # only display when active object is of a certain type and we need to update the UI.
-    utils.tag_prefs_redraw(bpy.context)
+    polib.ui_bpy.tag_areas_redraw(bpy.context, {'PREFERENCES'})
 
 
 def _subscribe_msg_bus():
@@ -767,7 +905,7 @@ def _subscribe_msg_bus():
 
 @bpy.app.handlers.persistent
 def mapr_browser_load_post_handler(_):
-    prefs = preferences.prefs_utils.get_preferences(bpy.context).mapr_preferences
+    prefs = preferences.prefs_utils.get_preferences(bpy.context).browser_preferences
     # If mapr browser replaced preferences in previous instance, open it again
     if prefs.prefs_hijacked:
         # We need to clear the previously stored area ui types, so we don't refresh

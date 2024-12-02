@@ -31,7 +31,7 @@ def make_selection_linked(
 
     spawner = mapr.blender_asset_spawner.AssetSpawner(asset_provider, file_provider)
 
-    for obj in polib.asset_pack_bpy.find_polygoniq_root_objects(context.selected_objects):
+    for obj in polib.asset_pack_bpy.find_root_objects(context.selected_objects):
         if obj.instance_type == 'COLLECTION':
             continue
 
@@ -130,7 +130,7 @@ class MakeSelectionEditable(bpy.types.Operator):
 
         logger.info(f"Resulting objects and parents: {selected_objects_and_parents_names}")
 
-        prefs = preferences.prefs_utils.get_preferences(context).mapr_preferences
+        prefs = preferences.prefs_utils.get_preferences(context).browser_preferences
         if prefs.spawn_options.remove_duplicates:
             filters = [polib.remove_duplicates_bpy.polygoniq_duplicate_data_filter]
             polib.remove_duplicates_bpy.remove_duplicate_datablocks(

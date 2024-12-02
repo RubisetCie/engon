@@ -19,29 +19,24 @@
 # ##### END GPL LICENSE BLOCK #####
 
 import bpy
-import bpy_extras
 import typing
-import os
-import glob
-import json
 import functools
 
 # we don't use this module in this file but we use it elsewhere in engon, we import
 # it here to make sure we handle module cache reloads correctly
 from . import prefs_utils
 from . import general_preferences
-from . import mapr_preferences
+from . import browser_preferences
 from . import what_is_new_preferences
-from . import aquatiq_preferences
-from . import botaniq_preferences
-from . import traffiq_preferences
 from .. import keymaps
 from .. import ui_utils
+from .. import features
 from .. import polib
 from .. import __package__ as base_package
 
 
 MODULE_CLASSES: typing.List[typing.Any] = []
+CONFLICTING_ADDONS = polib.utils_bpy.get_conflicting_addons(base_package)
 
 
 class ShowReleaseNotes(bpy.types.Operator):
@@ -73,10 +68,10 @@ class Preferences(bpy.types.AddonPreferences):
         type=general_preferences.GeneralPreferences,
     )
 
-    mapr_preferences: bpy.props.PointerProperty(
+    browser_preferences: bpy.props.PointerProperty(
         name="Browser Preferences",
         description="Preferences related to the mapr asset browser",
-        type=mapr_preferences.MaprPreferences,
+        type=browser_preferences.BrowserPreferences,
     )
 
     what_is_new_preferences: bpy.props.PointerProperty(
@@ -85,22 +80,58 @@ class Preferences(bpy.types.AddonPreferences):
         type=what_is_new_preferences.WhatIsNewPreferences,
     )
 
-    aquatiq_preferences: bpy.props.PointerProperty(
-        name="Aquatiq Preferences",
-        description="Preferences related to the aquatiq asset pack",
-        type=aquatiq_preferences.AquatiqPreferences,
+    botaniq_adjustment_preferences: bpy.props.PointerProperty(
+        name="Botaniq Adjustment Preferences",
+        description="Preferences related to the botaniq adjustment feature",
+        type=features.botaniq_adjustments.BotaniqAdjustmentPreferences,
     )
 
-    botaniq_preferences: bpy.props.PointerProperty(
-        name="Botaniq Preferences",
-        description="Preferences related to the botaniq asset pack",
-        type=botaniq_preferences.BotaniqPreferences,
+    colorize_preferences: bpy.props.PointerProperty(
+        name="Colorize Preferences",
+        description="Preferences related to the colorize engon feature",
+        type=features.colorize.ColorizePreferences,
     )
 
-    traffiq_preferences: bpy.props.PointerProperty(
-        name="Traffiq Preferences",
-        description="Preferences related to the traffiq asset pack",
-        type=traffiq_preferences.TraffiqPreferences,
+    light_adjustments_preferences: bpy.props.PointerProperty(
+        name="Light Adjustments Preferences",
+        description="Preferences related to the light adjustments engon feature",
+        type=features.light_adjustments.LightAdjustmentsPreferences,
+    )
+
+    aquatiq_paint_mask_preferences: bpy.props.PointerProperty(
+        name="Aquatiq Paint Mask Preferences",
+        description="Preferences related to the aquatiq paint mask engon feature",
+        type=features.aquatiq_paint_mask.PaintMaskPreferences,
+    )
+
+    botaniq_animations_preferences: bpy.props.PointerProperty(
+        name="Botaniq Animations Preferences",
+        description="Preferences related to the botaniq animations engon feature",
+        type=features.botaniq_animations.botaniq_animations.BotaniqAnimationsPreferences,
+    )
+
+    traffiq_lights_settings_preferences: bpy.props.PointerProperty(
+        name="Traffiq Light Settings Preferences",
+        description="Preferences related to the traffiq lights settings engon feature",
+        type=features.traffiq_lights_settings.TraffiqLightsSettingsPreferences,
+    )
+
+    traffiq_paint_adjustments_preferences: bpy.props.PointerProperty(
+        name="Traffiq Paint Adjustments Preferences",
+        description="Preferences related to the traffiq paint adjustments engon feature",
+        type=features.traffiq_paint_adjustments.TraffiqPaintAdjustmentPreferences,
+    )
+
+    traffiq_wear_preferences: bpy.props.PointerProperty(
+        name="Traffiq Wear Preferences",
+        description="Preferences related to the traffiq wear preferences engon feature",
+        type=features.traffiq_wear.TraffiqWearPreferences,
+    )
+
+    traffiq_rigs_preferences: bpy.props.PointerProperty(
+        name="Traffiq Rigs Preferences",
+        description="Preferences related to the traffiq rigs engon feature",
+        type=features.traffiq_rigs.TraffiqRigsPreferences,
     )
 
     first_time_register: bpy.props.BoolProperty(
@@ -125,6 +156,7 @@ class Preferences(bpy.types.AddonPreferences):
     )
 
     def draw(self, context: bpy.types.Context) -> None:
+        polib.ui_bpy.draw_conflicting_addons(self.layout, base_package, CONFLICTING_ADDONS)
         col = self.layout.column()
 
         # Asset Packs section
@@ -209,11 +241,8 @@ MODULE_CLASSES.append(PackLogs)
 
 def register():
     general_preferences.register()
-    mapr_preferences.register()
+    browser_preferences.register()
     what_is_new_preferences.register()
-    aquatiq_preferences.register()
-    botaniq_preferences.register()
-    traffiq_preferences.register()
     for cls in MODULE_CLASSES:
         bpy.utils.register_class(cls)
 
@@ -221,9 +250,6 @@ def register():
 def unregister():
     for cls in reversed(MODULE_CLASSES):
         bpy.utils.unregister_class(cls)
-    traffiq_preferences.unregister()
-    botaniq_preferences.unregister()
-    aquatiq_preferences.unregister()
     what_is_new_preferences.unregister()
-    mapr_preferences.unregister()
+    browser_preferences.unregister()
     general_preferences.unregister()

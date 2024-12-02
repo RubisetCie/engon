@@ -19,6 +19,7 @@ from . import utils
 from . import load
 from . import textures
 from . import displacement
+from . import bounding_box
 
 logger = logging.getLogger(f"polygoniq.{__name__}")
 
@@ -82,12 +83,22 @@ def spawn_model(
     if options.rotation_euler_override is not None:
         root_empty.rotation_euler = options.rotation_euler_override
 
+    EMPTY_MARGIN_MULTIPLIER = 1.05
+    bbox = bounding_box.AlignedBox()
+
     # Copy all children properties from the instanced objects to the instancer object
     for obj in root_empty.instance_collection.all_objects:
         if obj.library is None:
             continue
 
+        bbox.extend_by_object(obj)
         utils.copy_custom_props(obj, root_empty)
+
+    # Set empty size based on model's size. To simplify the math, we assume the object origin is
+    # somewhere in the middle which allows us to divide the max dimension by 2 instead of
+    # calculating offset of object origin from bounding box center
+    max_dimension = max(bbox.get_size())
+    root_empty.empty_display_size = min(max_dimension / 2.0 * EMPTY_MARGIN_MULTIPLIER, 1.0)
 
     for col in root_empty.users_collection:
         col.objects.unlink(root_empty)
@@ -129,7 +140,18 @@ def spawn_material(
 
     Returns the spawned material.
     """
+
     material = load.load_material(path)
+
+    # If no object is selected we will spawn a sphere and assign material on it
+    if len(options.target_objects) == 0:
+        bpy.ops.mesh.primitive_uv_sphere_add()
+        bpy.ops.object.shade_smooth()
+        # The spawned sphere is the active object
+        assert context.active_object is not None
+        context.active_object.name = material.name
+        options.target_objects.add(context.active_object)
+
     for obj in options.target_objects:
         if not utils.can_have_materials_assigned(obj):
             continue
@@ -288,6 +310,7 @@ def spawn_geometry_nodes(
     obj = load.load_master_object(path)
     if options.parent_collection is not None:
         options.parent_collection.objects.link(obj)
+    obj.location = context.scene.cursor.location
 
     # Due to a bug in Blender while converting boolean inputs we reassign the modifier node
     # group when spawning. The bug happens when object with modifiers is appended from a blend
