@@ -85,7 +85,9 @@ try:
     if os.path.isdir(ADDITIONAL_DEPS_DIR) and ADDITIONAL_DEPS_DIR not in sys.path:
         sys.path.insert(0, ADDITIONAL_DEPS_DIR)
 
-    dependencies = {"polib", "hatchery", "mapr"}
+    # We import in reverse order of dependencies, to import dependencies first before they are
+    # imported in the libraries. Technically this shouldn't matter.
+    dependencies = ["hatchery", "polib", "mapr"]
     for dependency in dependencies:
         logger.debug(f"Importing additional dependency {dependency}")
         dependency_module = importlib.import_module(dependency)
@@ -101,6 +103,7 @@ try:
 
     from . import ui_utils
     from . import asset_registry
+    from . import asset_pack_installer
     from . import pack_info_search_paths
     from . import asset_helpers
     from . import preferences
@@ -109,11 +112,10 @@ try:
     from . import browser
     from . import blend_maintenance
 
-    from . import aquatiq
-    from . import botaniq
     from . import materialiq
-    from . import traffiq
     from . import scatter
+    from . import clicker
+    from . import features
 
     from . import keymaps
 
@@ -129,12 +131,12 @@ finally:
 bl_info = {
     "name": "Engon",
     "author": "Polygoniq XYZ S.R.O.",
-    "version": (1, 2, 1),  # bump doc_url and version in register as well!
-    "blender": (3, 3, 0),
+    "version": (1, 4, 0),  # bump doc_url and version in register as well!
+    "blender": (3, 6, 0),
     "location": "Engon tab in the sidebar of the 3D View window",
     "description": "Browse assets, filter and sort them, scatter, animate, manipulate rigs",
     "category": "Object",
-    "doc_url": "https://docs.polygoniq.com/engon/1.2.1/",
+    "doc_url": "https://docs.polygoniq.com/engon/1.4.0/",
     "tracker_url": "https://polygoniq.com/discord/",
 }
 
@@ -149,18 +151,21 @@ def _post_register():
 
 
 def register():
+    # We pass mock "bl_info" to the updater, as from Blender 4.2.0, the "bl_info" is
+    # no longer available in this scope.
+    addon_updater_ops.register({"version": (1, 4, 0)})
+
     ui_utils.register()
     pack_info_search_paths.register()
-    preferences.register()
     convert_selection.register()
     panel.register()
     scatter.register()
+    clicker.register()
     blend_maintenance.register()
     browser.register()
-    aquatiq.register()
-    botaniq.register()
     materialiq.register()
-    traffiq.register()
+    features.register()
+    preferences.register()
     keymaps.register()
 
     bpy.app.timers.register(
@@ -176,16 +181,15 @@ def register():
 
 def unregister():
     keymaps.unregister()
-    traffiq.unregister()
+    preferences.unregister()
+    features.unregister()
     materialiq.unregister()
-    botaniq.unregister()
-    aquatiq.unregister()
     browser.unregister()
     blend_maintenance.unregister()
+    clicker.unregister()
     scatter.unregister()
     panel.unregister()
     convert_selection.unregister()
-    preferences.unregister()
     pack_info_search_paths.unregister()
     ui_utils.unregister()
 

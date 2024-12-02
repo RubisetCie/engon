@@ -48,14 +48,16 @@ AQ_MATERIALS_LIBRARY_BLEND = "aq_Library_Materials.blend"
 BOTANIQ_ALL_SEASONS_RAW = "spring-summer-autumn-winter"
 BQ_COLLECTION_NAME = "botaniq"
 BQ_VINE_GENERATOR_NODE_GROUP_NAME = "bq_Vine_Generator"
+BQ_CURVES_GENERATOR_NODE_GROUP_NAME = "bq_Generator_Curves"
 BQ_ANIM_LIBRARY_BLEND = "bq_Library_Animation_Data.blend"
 
 # traffiq constants
 TQ_MODIFIER_LIBRARY_BLEND = "tq_Library_Modifiers.blend"
 TQ_EMERGENCY_LIGHTS_NODE_GROUP_NAME = "tq_Emergency_Lights"
+TQ_LICENSE_PLATE_NODE_GROUP_NAME_PREFIX = "tq_License-Plate_"
 
 
-PARTICLE_SYSTEM_PREFIX = f"engon_{polib.asset_pack_bpy.PARTICLE_SYSTEM_TOKEN}_"
+PARTICLE_SYSTEM_PREFIX = f"engon_{polib.asset_pack.PARTICLE_SYSTEM_TOKEN}_"
 
 
 # Inputs for the aquatiq puddle nodes
@@ -90,18 +92,29 @@ def has_active_object_with_particle_system(context: bpy.types.Context) -> bool:
     return has_active_particle_system(context.active_object)
 
 
-def is_asset_with_engon_feature(
+def is_obj_with_engon_feature(
     obj: bpy.types.Object, feature: str, include_editable: bool = True, include_linked: bool = True
 ) -> bool:
-    engon_feature_packs = asset_registry.instance.get_packs_by_engon_feature(feature)
-    polygoniq_addon = obj.get("polygoniq_addon", None)
-    if polygoniq_addon is None or polygoniq_addon not in (
-        x.file_id_prefix.strip("/") for x in engon_feature_packs
+    if not polib.asset_pack_bpy.is_polygoniq_object(
+        obj, include_editable=include_editable, include_linked=include_linked
     ):
         return False
-    return polib.asset_pack_bpy.is_polygoniq_object(
-        obj, lambda x: x == polygoniq_addon, include_editable, include_linked
-    )
+
+    mapr_asset_id = obj.get("mapr_asset_id", None)
+    if mapr_asset_id is None:
+        # The asset might be ours but if it doesn't have a MAPR ID we can't figure out which asset
+        # pack it's from.
+        return False
+
+    asset_pack = asset_registry.instance.get_asset_pack_of_asset(mapr_asset_id)
+    if asset_pack is None:
+        # The asset has a mapr ID but we can't find an enabled asset pack that has it
+        # this is unusual and most probably somebody spawned an asset from an asset pack, then
+        # disabled or uninstalled the pack. Either way we can't figure out which engon feature it
+        # has if it's not present.
+        return False
+
+    return feature in asset_pack.engon_features
 
 
 def is_object_from_seasons(obj: bpy.types.Object, seasons: typing.Set[str]) -> bool:
@@ -254,7 +267,7 @@ def gather_instanced_objects(
 
             instance_collection = mod.particle_system.settings.instance_collection
             if (
-                polib.asset_pack_bpy.is_pps(mod.particle_system.name)
+                polib.asset_pack.is_pps_name(mod.particle_system.name)
                 and instance_collection is not None
             ):
                 yield from instance_collection.all_objects
