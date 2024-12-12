@@ -101,7 +101,7 @@ try:
     from . import hatchery
     from . import mapr
 
-    from . import ui_utils
+    from . import utils
     from . import asset_registry
     from . import asset_pack_installer
     from . import pack_info_search_paths
@@ -131,12 +131,12 @@ finally:
 bl_info = {
     "name": "Engon",
     "author": "Polygoniq XYZ S.R.O.",
-    "version": (1, 4, 0),  # bump doc_url and version in register as well!
+    "version": (1, 4, 1),  # bump doc_url and version in register as well!
     "blender": (3, 6, 0),
     "location": "Engon tab in the sidebar of the 3D View window",
     "description": "Browse assets, filter and sort them, scatter, animate, manipulate rigs",
     "category": "Object",
-    "doc_url": "https://docs.polygoniq.com/engon/1.4.0/",
+    "doc_url": "https://docs.polygoniq.com/engon/1.4.1/",
     "tracker_url": "https://polygoniq.com/discord/",
 }
 
@@ -153,9 +153,9 @@ def _post_register():
 def register():
     # We pass mock "bl_info" to the updater, as from Blender 4.2.0, the "bl_info" is
     # no longer available in this scope.
-    addon_updater_ops.register({"version": (1, 4, 0)})
+    addon_updater_ops.register({"version": (1, 4, 1)})
 
-    ui_utils.register()
+    utils.register()
     pack_info_search_paths.register()
     convert_selection.register()
     panel.register()
@@ -191,7 +191,7 @@ def unregister():
     panel.unregister()
     convert_selection.unregister()
     pack_info_search_paths.unregister()
-    ui_utils.unregister()
+    utils.unregister()
 
     # Remove all nested modules from module cache, more reliable than importlib.reload(..)
     # Idea by BD3D / Jacques Lucke
