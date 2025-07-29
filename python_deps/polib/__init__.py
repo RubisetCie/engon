@@ -19,7 +19,6 @@ try:
     from . import linalg_bpy
     from . import log_helpers_bpy
     from . import material_utils_bpy
-    from . import module_install_utils_bpy
     from . import node_utils_bpy
     from . import preview_manager_bpy
     from . import remove_duplicates_bpy
@@ -30,9 +29,7 @@ try:
     from . import split_file_reader
     from . import ui_bpy
     from . import utils_bpy
-
-    # singleton instance
-    module_provider = module_install_utils_bpy.ModuleProvider()
+    from . import serialization_bpy
 
 except ImportError as e:
     if e.name != "bpy":
@@ -51,7 +48,6 @@ except ImportError as e:
     linalg_bpy = types.ModuleType("linalg_bpy")
     log_helpers_bpy = types.ModuleType("log_helpers_bpy")
     material_utils_bpy = types.ModuleType("material_utils_bpy")
-    module_install_utils_bpy = types.ModuleType("module_install_utils_bpy")
     node_utils_bpy = types.ModuleType("node_utils_bpy")
     preview_manager_bpy = types.ModuleType("preview_manager_bpy")
     remove_duplicates_bpy = types.ModuleType("remove_duplicates_bpy")
@@ -62,6 +58,7 @@ except ImportError as e:
     split_file_reader = types.ModuleType("split_file_reader")
     ui_bpy = types.ModuleType("ui_bpy")
     utils_bpy = types.ModuleType("utils_bpy")
+    serialization_bpy = types.ModuleType("serialization_bpy")
 
 
 # fake bl_info so that this gets picked up by vscode blender integration
@@ -92,7 +89,6 @@ __all__ = [
     "linalg_bpy",
     "log_helpers_bpy",
     "material_utils_bpy",
-    "module_install_utils_bpy",
     "node_utils_bpy",
     "preview_manager_bpy",
     "remove_duplicates_bpy",
@@ -103,4 +99,5 @@ __all__ = [
     "split_file_reader",
     "ui_bpy",
     "utils_bpy",
+    "serialization_bpy",
 ]
