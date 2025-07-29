@@ -1,0 +1,24 @@
+name: Build Blender Addon
+on: workflow_dispatch
+env:
+  ADDONFULL: Engon
+  ADDONNAME: engon
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Extracting Version
+        run: echo "ADDONVER=$(grep -oP '^version *= *\"?\K[0-9|\.]+' blender_manifest.toml)" >> $GITHUB_ENV
+      - name: Building Addon
+        run: zip -9 -r -ll -Z bzip2 "${ADDONNAME}-${ADDONVER}.zip" blend_maintenance browser features materialiq preferences python_deps utils blender_manifest.toml LICENSE *.py
+      - name: Draft Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{env.ADDONVER}}
+          tag_name: v${{env.ADDONVER}}
+          prerelease: false
+          draft: true
+          files: ${{env.ADDONNAME}}-${{env.ADDONVER}}.zip
