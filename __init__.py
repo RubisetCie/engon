@@ -129,18 +129,6 @@ finally:
     if ADDITIONAL_DEPS_DIR in sys.path:
         sys.path.remove(ADDITIONAL_DEPS_DIR)
 
-bl_info = {
-    "name": "Engon",
-    "author": "Polygoniq XYZ S.R.O.",
-    "version": (1, 6, 0),  # bump doc_url and version in register as well!
-    "blender": (3, 6, 0),
-    "location": "Engon tab in the sidebar of the 3D View window",
-    "description": "Browse assets, filter and sort them, scatter, animate, manipulate rigs",
-    "category": "Object",
-    "doc_url": "https://docs.polygoniq.com/engon/1.6.0/",
-    "tracker_url": "https://polygoniq.com/discord/",
-}
-
 
 def _post_register():
     prefs = preferences.prefs_utils.get_preferences(bpy.context)
@@ -150,14 +138,8 @@ def _post_register():
         polib.ui_bpy.expand_addon_prefs(__package__)
         prefs.first_time_register = False
 
-    addon_updater_ops.check_for_update_background()
-
 
 def register():
-    # We pass mock "bl_info" to the updater, as from Blender 4.2.0, the "bl_info" is
-    # no longer available in this scope.
-    addon_updater_ops.register({"version": (1, 6, 0)})
-
     utils.register()
     pack_info_search_paths.register()
     available_asset_packs.register()
