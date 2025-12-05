@@ -28,7 +28,6 @@ from . import prefs_utils
 from . import general_preferences
 from . import browser_preferences
 from . import what_is_new_preferences
-from .. import available_asset_packs
 from .. import keymaps
 from .. import utils
 from .. import features
@@ -36,7 +35,7 @@ from .. import polib
 from .. import __package__ as base_package
 
 
-MODULE_CLASSES: typing.List[typing.Any] = []
+MODULE_CLASSES: list[typing.Any] = []
 CONFLICTING_ADDONS = polib.utils_bpy.get_conflicting_addons(base_package)
 
 
@@ -69,25 +68,43 @@ MODULE_CLASSES.append(ShowReleaseNotes)
 
 
 @polib.log_helpers_bpy.logged_preferences
-class Preferences(bpy.types.AddonPreferences):
+@polib.serialization_bpy.serializable_class
+class Preferences(bpy.types.AddonPreferences, polib.serialization_bpy.Savable):
     bl_idname = base_package
+    addon_name = base_package.split('.')[-1]  # Use only the last part in case of development
+    save_version = 2
+    strict_mode = False
 
-    general_preferences: bpy.props.PointerProperty(
-        name="General Preferences",
-        description="Preferences related to all asset packs",
-        type=general_preferences.GeneralPreferences,
+    @property
+    def config_name(self) -> str:
+        return "preferences"
+
+    @property
+    def auto_save(self) -> bool:
+        return True
+
+    general_preferences: polib.serialization_bpy.Serialize(
+        bpy.props.PointerProperty(
+            name="General Preferences",
+            description="Preferences related to all asset packs",
+            type=general_preferences.GeneralPreferences,
+        )
     )
 
-    browser_preferences: bpy.props.PointerProperty(
-        name="Browser Preferences",
-        description="Preferences related to the mapr asset browser",
-        type=browser_preferences.BrowserPreferences,
+    browser_preferences: polib.serialization_bpy.Serialize(
+        bpy.props.PointerProperty(
+            name="Browser Preferences",
+            description="Preferences related to the mapr asset browser",
+            type=browser_preferences.BrowserPreferences,
+        )
     )
 
-    what_is_new_preferences: bpy.props.PointerProperty(
-        name="\"See What's New\" preferences",
-        description="Preferences related to the \"See What's New\" button",
-        type=what_is_new_preferences.WhatIsNewPreferences,
+    what_is_new_preferences: polib.serialization_bpy.Serialize(
+        bpy.props.PointerProperty(
+            name="\"See What's New\" preferences",
+            description="Preferences related to the \"See What's New\" button",
+            type=what_is_new_preferences.WhatIsNewPreferences,
+        )
     )
 
     botaniq_adjustment_preferences: bpy.props.PointerProperty(
@@ -144,6 +161,24 @@ class Preferences(bpy.types.AddonPreferences):
         type=features.traffiq_rigs.TraffiqRigsPreferences,
     )
 
+    pictorial_wear_preferences: bpy.props.PointerProperty(
+        name="Pictorial Wear Preferences",
+        description="Preferences related to the pictorial wear engon feature",
+        type=features.pictorial_wear.PictorialWearPreferences,
+    )
+
+    pictorial_adjustments_preferences: bpy.props.PointerProperty(
+        name="Pictorial Adjustments Preferences",
+        description="Preferences related to the pictorial adjustments engon feature",
+        type=features.pictorial_adjustments.PictorialAdjustmentsPreferences,
+    )
+
+    sculpture_wear_preferences: bpy.props.PointerProperty(
+        name="Sculpture Wear Preferences",
+        description="Preferences related to the sculpture wear engon feature",
+        type=features.sculpture_wear.SculptureWearPreferences,
+    )
+
     first_time_register: bpy.props.BoolProperty(
         description="Gets set to False when Engon gets registered for the first time "
         "or when registered after being unregistered",
@@ -163,13 +198,6 @@ class Preferences(bpy.types.AddonPreferences):
     )
 
     show_keymaps: bpy.props.BoolProperty(description="Show/Hide Keymaps", default=False)
-
-    save_prefs: bpy.props.BoolProperty(
-        name="Auto-Save Preferences",
-        description="Automatically saves Preferences after running operators "
-        "(e.g. Install Asset Pack) that change Engon preferences",
-        default=True,
-    )
 
     def draw(self, context: bpy.types.Context) -> None:
         polib.ui_bpy.draw_conflicting_addons(self.layout, base_package, CONFLICTING_ADDONS)
@@ -198,61 +226,69 @@ class Preferences(bpy.types.AddonPreferences):
                 docs_rel_url="advanced_topics/search_paths",
             )
 
-        # Available Asset Packs section
-        not_installed_available_packs = (
-            available_asset_packs.get_not_installed_available_asset_packs()
-        )
-        if len(not_installed_available_packs) > 0:
-            polib.ui_bpy.collapsible_box(
-                col,
-                self,
-                "show_available_packs",
-                f"Discover Available Asset Packs ({len(not_installed_available_packs)})",
-                functools.partial(
-                    available_asset_packs.draw_available_asset_packs,
-                    context,
-                ),
-            )
-
         # Keymaps section
         polib.ui_bpy.collapsible_box(
             col,
             self,
             "show_keymaps",
             "Keymaps",
-            functools.partial(keymaps.draw_settings_ui, context),
+            functools.partial(
+                polib.keymaps_bpy.draw_settings_ui, context, keymaps.KEYMAP_DEFINITIONS
+            ),
         )
 
         box = col.box()
 
         # Misc preferences
-        self.draw_save_userpref_prompt(box)
         row = box.row()
         row.prop(self.what_is_new_preferences, "display_what_is_new")
+
+        polib.serialization_bpy.io_operators_bpy.draw_import_export_savable_panel(
+            self.layout,
+            "Preferences",
+            ExportPreferences.bl_idname,
+            ImportPreferences.bl_idname,
+            SearchPreferences.bl_idname,
+        )
 
         # Open Log Folder button
         self.layout.operator(PackLogs.bl_idname, icon='EXPERIMENTAL')
 
         polib.ui_bpy.draw_settings_footer(self.layout)
 
-    def draw_save_userpref_prompt(self, layout: bpy.types.UILayout):
-        row = layout.row()
-        row.prop(self, "save_prefs")
-        row = row.row()
-        row.alignment = 'RIGHT'
-        op = row.operator(utils.show_popup.ShowPopup.bl_idname, text="", icon='INFO')
-        op.message = (
-            "Automatically saves preferences after running operators "
-            "(e.g. Install Asset Pack) that change Engon preferences. \n"
-            "If you do not save preferences after running these operators, "
-            "you might lose important Engon data, for example, \n"
-            "your installed Asset Packs might not load properly the next time you open Blender."
-        )
-        op.title = "Auto-Save Preferences"
-        op.icon = 'INFO'
-
 
 MODULE_CLASSES.append(Preferences)
+
+
+def on_preferences_imported(op, context: bpy.types.Context) -> None:
+    # We need to refresh assetpacks after any import as they might have changed
+    prefs = prefs_utils.get_preferences(context)
+    gen_prefs = prefs.general_preferences
+    gen_prefs.refresh_packs()
+
+
+(
+    ExportPreferences,
+    ImportPreferences,
+    FoundPreferencesItem,
+    SearchPreferences,
+    ImportPreferencesIgnoreVersion,
+) = polib.serialization_bpy.io_operators_bpy.savable_operators_factory(
+    "engon",
+    "preferences",
+    lambda self: prefs_utils.get_preferences(bpy.context),  # type: ignore[return-value]
+    on_preferences_imported,
+)
+
+MODULE_CLASSES.extend(
+    [
+        ExportPreferences,
+        ImportPreferences,
+        FoundPreferencesItem,
+        SearchPreferences,
+        ImportPreferencesIgnoreVersion,
+    ]
+)
 
 
 @polib.log_helpers_bpy.logged_operator
@@ -277,6 +313,10 @@ def register():
     what_is_new_preferences.register()
     for cls in MODULE_CLASSES:
         bpy.utils.register_class(cls)
+
+    polib.serialization_bpy.utils_bpy.post_register_load(
+        lambda: prefs_utils.get_preferences(bpy.context)  # type: ignore[return-value]
+    )
 
 
 def unregister():

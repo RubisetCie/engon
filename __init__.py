@@ -105,7 +105,6 @@ try:
     from . import asset_registry
     from . import asset_pack_installer
     from . import pack_info_search_paths
-    from . import available_asset_packs
     from . import asset_helpers
     from . import preferences
     from . import convert_selection
@@ -142,7 +141,6 @@ def _post_register():
 def register():
     utils.register()
     pack_info_search_paths.register()
-    available_asset_packs.register()
     convert_selection.register()
     panel.register()
     scatter.register()
@@ -176,7 +174,6 @@ def unregister():
     scatter.unregister()
     panel.unregister()
     convert_selection.unregister()
-    available_asset_packs.unregister()
     pack_info_search_paths.unregister()
     utils.unregister()
 

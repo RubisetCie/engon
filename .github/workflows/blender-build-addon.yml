@@ -13,7 +13,7 @@ jobs:
       - name: Extracting Version
         run: echo "ADDONVER=$(grep -oP '^version *= *\"?\K[0-9|\.]+' blender_manifest.toml)" >> $GITHUB_ENV
       - name: Building Addon
-        run: zip -9 -r -ll -Z bzip2 "${ADDONNAME}-${ADDONVER}.zip" blend_maintenance browser features materialiq preferences python_deps utils blender_manifest.toml LICENSE *.py
+        run: zip -9 -r -Z bzip2 "${ADDONNAME}-${ADDONVER}.zip" blend_maintenance browser features materialiq preferences python_deps utils blender_manifest.toml LICENSE *.py
       - name: Draft Release
         uses: softprops/action-gh-release@v2
         with:

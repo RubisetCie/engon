@@ -11,7 +11,7 @@ import os
 import shutil
 
 
-def logged_operator(cls: typing.Type[bpy.types.Operator]):
+def logged_operator(cls: type[bpy.types.Operator]):
     assert issubclass(
         cls, bpy.types.Operator
     ), "logged_operator only accepts classes inheriting bpy.types.Operator"
@@ -91,7 +91,7 @@ def logged_operator(cls: typing.Type[bpy.types.Operator]):
         if name == "report":
             orig_report = original_getattribute(self, name)
 
-            def new_report(type_: typing.Set[str], message: str) -> None:
+            def new_report(type_: set[str], message: str) -> None:
                 type_value = list(type_)[0]
                 type_value_log_fn_map = {
                     'ERROR': logger.error,
@@ -115,7 +115,7 @@ def logged_operator(cls: typing.Type[bpy.types.Operator]):
     return cls
 
 
-def logged_panel(cls: typing.Type[bpy.types.Panel]):
+def logged_panel(cls: type[bpy.types.Panel]):
     assert issubclass(
         cls, bpy.types.Panel
     ), "logged_panel only accepts classes inheriting bpy.types.Panel"
@@ -147,7 +147,7 @@ def logged_panel(cls: typing.Type[bpy.types.Panel]):
     return cls
 
 
-def logged_preferences(cls: typing.Type[bpy.types.AddonPreferences]):
+def logged_preferences(cls: type[bpy.types.AddonPreferences]):
     assert issubclass(
         cls, bpy.types.AddonPreferences
     ), "logged_preferences only accepts classes inheriting bpy.types.AddonPreferences"

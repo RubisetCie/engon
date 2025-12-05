@@ -30,14 +30,13 @@ from . import prefs_utils
 from .. import asset_pack_installer
 from .. import pack_info_search_paths
 from .. import asset_registry
-from .. import available_asset_packs
 from .. import blend_maintenance
 from .. import __package__ as base_package
 
 logger = logging.getLogger(f"polygoniq.{__name__}")
 
 
-MODULE_CLASSES: typing.List[typing.Any] = []
+MODULE_CLASSES: list[typing.Any] = []
 
 
 class ScatterProperties(bpy.types.PropertyGroup):
@@ -120,9 +119,13 @@ class ClickerProperties(bpy.types.PropertyGroup):
 MODULE_CLASSES.append(ClickerProperties)
 
 
+@polib.serialization_bpy.serializable_class
+@polib.serialization_bpy.preferences_propagate_property_update(prefs_utils.get_preferences)
 class GeneralPreferences(bpy.types.PropertyGroup):
-    pack_info_search_paths: bpy.props.CollectionProperty(
-        name="Pack Info Search Paths", type=pack_info_search_paths.PackInfoSearchPath
+    pack_info_search_paths: polib.serialization_bpy.Serialize(
+        bpy.props.CollectionProperty(
+            name="Pack Info Search Paths", type=pack_info_search_paths.PackInfoSearchPath
+        )
     )
     pack_info_search_path_index: bpy.props.IntProperty(
         name="Pack Info Search Path Index",
@@ -132,26 +135,29 @@ class GeneralPreferences(bpy.types.PropertyGroup):
     scatter_props: bpy.props.PointerProperty(type=ScatterProperties, name="Scatter Properties")
     clicker_props: bpy.props.PointerProperty(type=ClickerProperties, name="Clicker Properties")
 
-    def get_pack_info_paths(self) -> typing.Iterable[str]:
+    def get_pack_info_paths(self) -> dict[str, asset_registry.RegisterOptions]:
+        ret = {}
         environment_globs = os.environ.get("ENGON_ADDITIONAL_PACK_INFO_GLOBS", None)
         if environment_globs is not None:
             for glob_ in environment_globs.split(";"):
                 pack_info_files = glob.glob(glob_, recursive=True)
                 for pack_info_file in pack_info_files:
-                    yield os.path.realpath(os.path.abspath(pack_info_file))
+                    ret[os.path.realpath(os.path.abspath(pack_info_file))] = (
+                        asset_registry.RegisterOptions()
+                    )
 
         for search_path in self.pack_info_search_paths:
             for pack in search_path.get_discovered_asset_packs():
-                yield pack.pack_info_path
+                ret[pack.pack_info_path] = asset_registry.RegisterOptions(
+                    blender_asset_library=search_path.blender_asset_library
+                )
 
-    def refresh_packs(self, save_prefs: bool = False) -> None:
+        return ret
+
+    def refresh_packs(self) -> None:
         pack_info_search_paths.PackInfoSearchPath.clear_discovered_packs_cache()
         pack_info_paths = self.get_pack_info_paths()
         asset_registry.instance.refresh_packs_from_pack_info_paths(pack_info_paths)
-
-        # we don't use the prop itself, because sometimes we don't need to save preferences
-        if save_prefs:
-            bpy.ops.wm.save_userpref()
 
     def pack_info_search_path_list_ensure_valid_index(self) -> None:
         min_index = 0
@@ -165,10 +171,12 @@ class GeneralPreferences(bpy.types.PropertyGroup):
 
     def add_new_pack_info_search_path(
         self,
-        path_type: typing.Optional[pack_info_search_paths.PackInfoSearchPathType] = None,
-        file_path: typing.Optional[str] = None,
-        directory_path: typing.Optional[str] = None,
-        glob_expression: typing.Optional[str] = None,
+        context: bpy.types.Context,
+        path_type: pack_info_search_paths.PackInfoSearchPathType | None = None,
+        file_path: str | None = None,
+        directory_path: str | None = None,
+        glob_expression: str | None = None,
+        blender_asset_library: bool = True,
     ) -> None:
         """Adds a new pack-info search path to the Collection.
 
@@ -183,6 +191,13 @@ class GeneralPreferences(bpy.types.PropertyGroup):
             search_path.directory_path = directory_path
         if glob_expression is not None:
             search_path.glob_expression = glob_expression
+
+        search_path.blender_asset_library = blender_asset_library
+        self._internal_on_serialized_property_update(context, "pack_info_search_paths")
+
+    def remove_pack_info_search_path(self, context: bpy.types.Context, index: int) -> None:
+        self.pack_info_search_paths.remove(index)
+        self._internal_on_serialized_property_update(context, "pack_info_search_paths")
 
     def remove_all_copies_of_pack_info_search_path(
         self,
@@ -206,10 +221,16 @@ class GeneralPreferences(bpy.types.PropertyGroup):
         self.pack_info_search_paths.clear()
         for sp in filtered_out:
             self.pack_info_search_paths.add().load_from_dict(sp)
-        gen_prefs = prefs_utils.get_preferences(context).general_preferences
-        gen_prefs.pack_info_search_path_list_ensure_valid_index()
+        self.pack_info_search_path_list_ensure_valid_index()
+        self._internal_on_serialized_property_update(context, "pack_info_search_paths")
 
-    def get_search_paths_as_dict(self) -> typing.Dict:
+    def move_pack_info_search_path(
+        self, context: bpy.types.Context, src_index: int, dst_index: str
+    ):
+        self.pack_info_search_paths.move(src_index, dst_index)
+        self._internal_on_serialized_property_update(context, "pack_info_search_paths")
+
+    def get_search_paths_as_dict(self) -> dict:
         ret = []
         for search_path in self.pack_info_search_paths:
             ret.append(search_path.as_dict())
@@ -217,7 +238,7 @@ class GeneralPreferences(bpy.types.PropertyGroup):
         return {"asset_pack_search_paths": ret}
 
     def add_search_paths_from_dict(
-        self, info_dict: typing.Dict[str, typing.List[typing.Dict[str, str]]]
+        self, context: bpy.types.Context, info_dict: dict[str, list[dict[str, str]]]
     ) -> None:
         search_paths_list = info_dict.get("asset_pack_search_paths", None)
         if search_paths_list is None:
@@ -235,6 +256,7 @@ class GeneralPreferences(bpy.types.PropertyGroup):
                 self.pack_info_search_paths.add()
             )
             search_path.load_from_dict(search_path_props)
+        self._internal_on_serialized_property_update(context, "pack_info_search_paths")
 
     def draw_asset_packs(self, layout: bpy.types.UILayout) -> None:
         row = layout.row()
@@ -266,14 +288,6 @@ class GeneralPreferences(bpy.types.PropertyGroup):
             # Right row for Update and Uninstall buttons
             row = row.row(align=True)
             row.alignment = 'RIGHT'
-            pack_metadata = available_asset_packs.get_available_pack_from_full_name(pack.full_name)
-            if pack_metadata is not None and pack_metadata.version > pack.version:
-                row.operator(
-                    available_asset_packs.ShowAvailablePackInfo.bl_idname,
-                    text="New Version Available",
-                    icon='URL',
-                ).pack_id = pack_metadata.id_
-                row.separator()
 
             op = row.operator(UpdateAssetPack.bl_idname, text="", icon='FILE_PARENT')
             op.current_filepath = pack.install_path
@@ -311,6 +325,18 @@ class GeneralPreferences(bpy.types.PropertyGroup):
         for search_path in self.pack_info_search_paths:
             yield from search_path.get_discovered_asset_packs()
 
+    def get_all_search_paths_register_options(
+        self,
+    ) -> dict[str, asset_registry.RegisterOptions]:
+        """Returns a dictionary of all discovered asset packs and their register options."""
+        ret = {}
+        for search_path in self.pack_info_search_paths:
+            for pack in search_path.get_discovered_asset_packs():
+                ret[pack.pack_info_path] = asset_registry.RegisterOptions(
+                    blender_asset_library=search_path.blender_asset_library
+                )
+        return ret
+
     def draw_pack_info_search_paths(
         self, context: bpy.types.Context, layout: bpy.types.UILayout
     ) -> None:
@@ -325,12 +351,25 @@ class GeneralPreferences(bpy.types.PropertyGroup):
 
         discovered_but_unregistered_packs_count = len(discovered_but_unregistered_packs)
 
+        # NOTE: This is currently handled for "blender_asset_library" register option only. Extend
+        # with more register options if needed.
+        search_path_register_options = self.get_all_search_paths_register_options()
+        different_register_options_packs = set()
+        for pack in registered_asset_packs:
+            if pack.pack_info_path in search_path_register_options:
+                options = search_path_register_options[pack.pack_info_path]
+                if options.blender_asset_library != pack._is_registered_in_blender_asset_library():
+                    different_register_options_packs.add(pack)
+
+        refresh_highlight = (
+            discovered_but_unregistered_packs_count > 0 or len(different_register_options_packs) > 0
+        )
         row = layout.row()
         col = row.column(align=True)
         col.operator(PackInfoSearchPathList_OT_AddItem.bl_idname, text="", icon='ADD')
         col.operator(PackInfoSearchPathList_OT_DeleteItem.bl_idname, text="", icon='REMOVE')
         sub = col.row()
-        sub.alert = discovered_but_unregistered_packs_count > 0
+        sub.alert = refresh_highlight
         sub.operator(PackInfoSearchPathList_RefreshPacks.bl_idname, text="", icon='FILE_REFRESH')
         col.separator()
         col.operator(
@@ -362,6 +401,15 @@ class GeneralPreferences(bpy.types.PropertyGroup):
             row.label(
                 text=f"Refresh Asset Packs to register {discovered_but_unregistered_packs_count} "
                 f"newly discovered pack{'' if discovered_but_unregistered_packs_count == 1 else 's'}!",
+                icon='FILE_REFRESH',
+            )
+
+        if len(different_register_options_packs) > 0:
+            row = layout.row()
+            row.alert = True
+            row.label(
+                text=f"{len(different_register_options_packs)} registered pack{'' if len(different_register_options_packs) == 1 else 's'} "
+                "have different register options, refresh asset packs to update!",
                 icon='FILE_REFRESH',
             )
 
@@ -413,7 +461,7 @@ class PackInfoSearchPathList_Import(bpy.types.Operator, bpy_extras.io_utils.Impo
         prefs = prefs_utils.get_preferences(context)
         with open(self.filepath) as f:
             data_in = json.load(f)
-            prefs.general_preferences.add_search_paths_from_dict(data_in)
+            prefs.general_preferences.add_search_paths_from_dict(context, data_in)
 
         return {'FINISHED'}
 
@@ -430,9 +478,8 @@ class PackInfoSearchPathList_OT_AddItem(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context: bpy.types.Context):
-        prefs = prefs_utils.get_preferences(context)
-        prefs.general_preferences.add_new_pack_info_search_path()
-
+        general_prefs = prefs_utils.get_preferences(context).general_preferences
+        general_prefs.add_new_pack_info_search_path(context)
         return {'FINISHED'}
 
 
@@ -453,23 +500,22 @@ class PackInfoSearchPathList_OT_DeleteItem(bpy.types.Operator):
         return len(prefs.general_preferences.pack_info_search_paths) > 0
 
     def execute(self, context: bpy.types.Context):
-        prefs = prefs_utils.get_preferences(context)
-        the_list = prefs.general_preferences.pack_info_search_paths
-        index = prefs.general_preferences.pack_info_search_path_index
+        general_prefs = prefs_utils.get_preferences(context).general_preferences
+        index = general_prefs.pack_info_search_path_index
         if index > 0:
-            prefs.general_preferences.pack_info_search_path_index -= 1
-            the_list.remove(index)
+            general_prefs.pack_info_search_path_index -= 1
+            general_prefs.remove_pack_info_search_path(context, index)
             # current index remains unchanged, we switch to the search path
             # just above the one we are deleting
         else:
             # switch to search path just below the one we are deleting
-            prefs.general_preferences.pack_info_search_path_index += 1
+            general_prefs.pack_info_search_path_index += 1
             # remove the first search path
-            the_list.remove(index)
+            general_prefs.remove_pack_info_search_path(context, index)
             # this means all the indices have to be adjusted by -1
-            prefs.general_preferences.pack_info_search_path_index -= 1
+            general_prefs.pack_info_search_path_index -= 1
 
-        prefs.general_preferences.pack_info_search_path_list_ensure_valid_index()
+        general_prefs.pack_info_search_path_list_ensure_valid_index()
         return {'FINISHED'}
 
 
@@ -496,13 +542,12 @@ class PackInfoSearchPathList_OT_MoveItem(bpy.types.Operator):
         return len(prefs.general_preferences.pack_info_search_paths) > 1
 
     def execute(self, context: bpy.types.Context):
-        prefs = prefs_utils.get_preferences(context)
-        the_list = prefs.general_preferences.pack_info_search_paths
-        index = prefs.general_preferences.pack_info_search_path_index
+        general_prefs = prefs_utils.get_preferences(context).general_preferences
+        index = general_prefs.pack_info_search_path_index
         neighbor = index + (-1 if self.direction == 'UP' else 1)
-        the_list.move(neighbor, index)
-        prefs.general_preferences.pack_info_search_path_index = neighbor
-        prefs.general_preferences.pack_info_search_path_list_ensure_valid_index()
+        general_prefs.move_pack_info_search_path(context, neighbor, index)
+        general_prefs.pack_info_search_path_index = neighbor
+        general_prefs.pack_info_search_path_list_ensure_valid_index()
         return {'FINISHED'}
 
 
@@ -517,10 +562,10 @@ class PackInfoSearchPathList_RemoveAll(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context: bpy.types.Context):
-        prefs = prefs_utils.get_preferences(context)
-        prefs.general_preferences.pack_info_search_paths.clear()
-        prefs.general_preferences.pack_info_search_path_list_ensure_valid_index()
-
+        general_prefs = prefs_utils.get_preferences(context).general_preferences
+        general_prefs.pack_info_search_paths.clear()
+        general_prefs.pack_info_search_path_list_ensure_valid_index()
+        general_prefs._internal_on_serialized_property_update(context, "pack_info_search_paths")
         return {'FINISHED'}
 
     def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
@@ -544,7 +589,7 @@ class PackInfoSearchPathList_RefreshPacks(bpy.types.Operator):
     def execute(self, context: bpy.types.Context):
         prefs = prefs_utils.get_preferences(context)
         gen_prefs = prefs.general_preferences
-        gen_prefs.refresh_packs(save_prefs=prefs.save_prefs)
+        gen_prefs.refresh_packs()
         return {'FINISHED'}
 
 
@@ -576,11 +621,7 @@ class InstallAssetPack(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
     def execute(self, context: bpy.types.Context):
         # Special condition for preventing Drag & Drop triggering unwanted failed installation dialogs
         # This is a workaround as the FileHandler is not able to accept '.paq.001' files, so we allow '.001' files there
-        if (
-            bpy.app.version >= (4, 1, 0)
-            and self.filepath.endswith(".001")
-            and not self.filepath.endswith(".paq.001")
-        ):
+        if self.filepath.endswith(".001") and not self.filepath.endswith(".paq.001"):
             logger.error(f"Unsupported file '{self.filepath}'")
             return {'CANCELLED'}
         installer = asset_pack_installer.instance
@@ -592,21 +633,20 @@ class InstallAssetPack(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
 
 MODULE_CLASSES.append(InstallAssetPack)
 
-# Drag & Drop support is only available in Blender 4.1+
-if bpy.app.version >= (4, 1, 0):
 
-    class InstallAssetPackDragAndDropHandler(bpy.types.FileHandler):
-        bl_idname = "ENGON_FH_install_asset_pack_drag_and_drop"
-        bl_label = "Drag & Drop Install Asset Pack"
-        bl_import_operator = InstallAssetPack.bl_idname
-        # .paq.001 is not supported so we allow .001 and check the "real" extension in the install operator
-        bl_file_extensions = ".paq;.pack-info;.001"
+class InstallAssetPackDragAndDropHandler(bpy.types.FileHandler):
+    bl_idname = "ENGON_FH_install_asset_pack_drag_and_drop"
+    bl_label = "Drag & Drop Install Asset Pack"
+    bl_import_operator = InstallAssetPack.bl_idname
+    # .paq.001 is not supported so we allow .001 and check the "real" extension in the install operator
+    bl_file_extensions = ".paq;.pack-info;.001"
 
-        @classmethod
-        def poll_drop(cls, context: bpy.types.Context) -> bool:
-            return True
+    @classmethod
+    def poll_drop(cls, context: bpy.types.Context) -> bool:
+        return True
 
-    MODULE_CLASSES.append(InstallAssetPackDragAndDropHandler)
+
+MODULE_CLASSES.append(InstallAssetPackDragAndDropHandler)
 
 
 @polib.log_helpers_bpy.logged_operator
@@ -642,10 +682,8 @@ class AssetPackInstallationDialog(
         layout: bpy.types.UILayout = self.layout
 
         if self.check_should_dialog_close():
-            if not self.close:
-                self.close = True
-            if not self.canceled:
-                layout.label(text=self.__class__.bl_label)
+            self.close = True
+            layout.label(text=self.__class__.bl_label)
             self.draw_status_and_messages(layout)
             return
 
@@ -657,12 +695,6 @@ class AssetPackInstallationDialog(
             col.label(text="Select an installation directory")
             row = col.row(align=True)
             row.prop(self, "install_path", text="")
-            # No need to use custom browser in higher versions because the functionality we tried to implement
-            # was patched in
-            if bpy.app.version < (4, 1, 0):
-                row.operator(
-                    SelectAssetPackInstallPath.bl_idname, text="", icon='FILE_FOLDER'
-                ).filepath = os.path.expanduser("~" + os.sep)
 
         self.draw_installer_info(box)
         col = box.column()
@@ -697,11 +729,6 @@ class AssetPackInstallationDialog(
                 text="Clicking 'OK' will COPY all contents of this Asset Pack into the installation directory."
             )
 
-        # We show custom cancel button only in versions before 4.1.0
-        # From that version all operators have cancel button natively
-        if bpy.app.version < (4, 1, 0):
-            layout.prop(self, "canceled", toggle=True, text="Cancel Installation", icon='CANCEL')
-
     @staticmethod
     def _install_pack(
         context: bpy.types.Context, installer: asset_pack_installer.AssetPackInstaller
@@ -709,16 +736,22 @@ class AssetPackInstallationDialog(
         prefs = prefs_utils.get_preferences(context)
         gen_prefs = prefs.general_preferences
 
-        pack_info_path_to_add: typing.Optional[str] = installer.execute_installation()
+        pack_info_path_to_add: str | None = installer.execute_installation()
         if pack_info_path_to_add is not None and not installer.check_asset_pack_already_installed():
             gen_prefs.add_new_pack_info_search_path(
+                context,
                 file_path=pack_info_path_to_add,
                 path_type=pack_info_search_paths.PackInfoSearchPathType.SINGLE_FILE,
+                blender_asset_library=installer.register_blender_asset_library,
             )
             asset_registry.instance.register_pack_from_pack_info_path(
-                pack_info_path_to_add, refresh_registry=False
+                pack_info_path_to_add,
+                asset_registry.RegisterOptions(
+                    blender_asset_library=installer.register_blender_asset_library
+                ),
+                refresh_registry=False,
             )
-            gen_prefs.refresh_packs(save_prefs=prefs.save_prefs)
+            gen_prefs.refresh_packs()
             blend_maintenance.migrator.find_missing_files()
 
     @polib.utils_bpy.blender_cursor('WAIT')
@@ -778,10 +811,8 @@ class AssetPackUninstallationDialog(
         layout: bpy.types.UILayout = self.layout
 
         if self.check_should_dialog_close():
-            if not self.close:
-                self.close = True
-            if not self.canceled:
-                layout.label(text=self.__class__.bl_label)
+            self.close = True
+            layout.label(text=self.__class__.bl_label)
             self.draw_status_and_messages(layout)
             return
 
@@ -802,11 +833,6 @@ class AssetPackUninstallationDialog(
                 text="Clicking 'OK' will REMOVE all contents of this Asset Pack from the installation directory."
             )
 
-        # We show custom cancel button only in versions before 4.1.0
-        # From that version all operators have cancel button natively
-        if bpy.app.version < (4, 1, 0):
-            layout.prop(self, "canceled", toggle=True, text="Cancel Uninstallation", icon='CANCEL')
-
     @staticmethod
     def _uninstall_pack(
         context: bpy.types.Context, installer: asset_pack_installer.AssetPackInstaller
@@ -824,7 +850,7 @@ class AssetPackUninstallationDialog(
             asset_registry.instance.unregister_pack_from_pack_info_path(
                 pack_info_path_to_remove, refresh_registry=False
             )
-            gen_prefs.refresh_packs(save_prefs=prefs.save_prefs)
+            gen_prefs.refresh_packs()
 
     @polib.utils_bpy.blender_cursor('WAIT')
     def execute(self, context: bpy.types.Context):
@@ -889,10 +915,8 @@ class AssetPackUpdateDialog(bpy.types.Operator, asset_pack_installer.AssetPackIn
         layout: bpy.types.UILayout = self.layout
 
         if self.check_should_dialog_close():
-            if not self.close:
-                self.close = True
-            if not self.canceled:
-                layout.label(text=self.__class__.bl_label)
+            self.close = True
+            layout.label(text=self.__class__.bl_label)
             self.draw_status_and_messages(layout)
             return
 
@@ -911,11 +935,6 @@ class AssetPackUpdateDialog(bpy.types.Operator, asset_pack_installer.AssetPackIn
                 text="Clicking 'OK' will REMOVE the old version of the Asset Pack from the installation directory."
             )
             col.label(text="It will be REPLACED with the new version.")
-
-        # We show custom cancel button only in versions before 4.1.0
-        # From that version all operators have cancel button natively
-        if bpy.app.version < (4, 1, 0):
-            layout.prop(self, "canceled", toggle=True, text="Cancel Update", icon='CANCEL')
 
     @staticmethod
     def _update_pack(
@@ -936,13 +955,19 @@ class AssetPackUpdateDialog(bpy.types.Operator, asset_pack_installer.AssetPackIn
                 pack_info_path_to_remove, refresh_registry=False
             )
             gen_prefs.add_new_pack_info_search_path(
+                context,
                 file_path=pack_info_path_to_add,
                 path_type=pack_info_search_paths.PackInfoSearchPathType.SINGLE_FILE,
+                blender_asset_library=installer.register_blender_asset_library,
             )
             asset_registry.instance.register_pack_from_pack_info_path(
-                pack_info_path_to_add, refresh_registry=False
+                pack_info_path_to_add,
+                asset_registry.RegisterOptions(
+                    blender_asset_library=installer.register_blender_asset_library
+                ),
+                refresh_registry=False,
             )
-            gen_prefs.refresh_packs(save_prefs=prefs.save_prefs)
+            gen_prefs.refresh_packs()
             blend_maintenance.migrator.find_missing_files()
 
     @polib.utils_bpy.blender_cursor('WAIT')
@@ -959,22 +984,6 @@ class AssetPackUpdateDialog(bpy.types.Operator, asset_pack_installer.AssetPackIn
 
 
 MODULE_CLASSES.append(AssetPackUpdateDialog)
-
-
-@polib.log_helpers_bpy.logged_operator
-class SelectAssetPackInstallPath(bpy.types.Operator, polib.ui_bpy.SelectFolderPathMixin):
-    bl_idname = "engon.select_asset_pack_install_path"
-    bl_description = "Select a Custom Install Path for the Asset Pack"
-
-    def execute(self, context: bpy.types.Context):
-        installer = asset_pack_installer.instance
-        if os.path.exists(self.filepath):
-            installer.install_path = os.path.dirname(self.filepath)
-
-        return bpy.ops.engon.asset_pack_install_dialog('INVOKE_DEFAULT')
-
-
-MODULE_CLASSES.append(SelectAssetPackInstallPath)
 
 
 def register():
