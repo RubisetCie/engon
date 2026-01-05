@@ -29,6 +29,7 @@ from .. import polib
 from . import prefs_utils
 from .. import asset_pack_installer
 from .. import pack_info_search_paths
+from .. import asset_helpers
 from .. import asset_registry
 from .. import blend_maintenance
 from .. import __package__ as base_package
@@ -156,6 +157,7 @@ class GeneralPreferences(bpy.types.PropertyGroup):
 
     def refresh_packs(self) -> None:
         pack_info_search_paths.PackInfoSearchPath.clear_discovered_packs_cache()
+        asset_helpers.get_materialiq_texture_sizes_enum_items.cache_clear()
         pack_info_paths = self.get_pack_info_paths()
         asset_registry.instance.refresh_packs_from_pack_info_paths(pack_info_paths)
 
