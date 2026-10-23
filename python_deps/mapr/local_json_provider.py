@@ -51,8 +51,8 @@ class LocalJSONProvider(file_provider.FileProvider, asset_provider.AssetProvider
         )
 
         # maps asset ID to IDs of categories it is in (including parents recursively)
-        self.asset_categories: collections.defaultdict[asset.AssetID, set[category.CategoryID]] = (
-            collections.defaultdict(set)
+        self.asset_categories: collections.defaultdict[asset.AssetID, list[category.CategoryID]] = (
+            collections.defaultdict(list)
         )
 
         # maps category ID to its metadata
@@ -124,6 +124,7 @@ class LocalJSONProvider(file_provider.FileProvider, asset_provider.AssetProvider
                 asset_to_category_id[asset_id] = child_category_id
 
         self.asset_categories = self.map_assets_to_categories()
+        asset_data_json = index_json.get("asset_data", {})
         for asset_id, asset_metadata_json in index_json.get("asset_metadata", {}).items():
             # Update vector parameters with color parameters for older asset packs
             # compatibility (prior to engon 1.2.0). Color parameters were defined solely prior to
@@ -132,17 +133,32 @@ class LocalJSONProvider(file_provider.FileProvider, asset_provider.AssetProvider
             vector_parameters.update(asset_metadata_json.get("color_parameters", {}))
 
             foreign_search_matter: dict[str, float] = {}
-            foreign_search_matter.update(
-                {
-                    self.categories[category_id].title: category.TITLE_SEARCH_WEIGHT
-                    for category_id in self.asset_categories.get(asset_id, set())
-                }
-            )
+            category_list = [
+                part.replace("_", " ")
+                for part in max(
+                    self.asset_categories.get(asset_id, set()), key=len, default=""
+                ).split("/")
+                if part != ""
+            ]
+            category_path = None if len(category_list) == 0 else tuple(category_list)
+
+            text_parameters = asset_metadata_json.get("text_parameters", {})
+
+            # Assets are indexed one per .blend file, so all asset data of one asset share the
+            # same primary .blend file. Its basename is the original name of the asset, which we
+            # expose as a hidden, searchable parameter, as the title is prettified for the UI.
+            asset_data_ids = self.child_asset_data.get(asset_id, [])
+            if len(asset_data_ids) > 0:
+                primary_blend_file = asset_data_json.get(asset_data_ids[0], {}).get(
+                    "primary_blend_file", ""
+                )
+                original_name, _ = os.path.splitext(os.path.basename(primary_blend_file))
+                if original_name != "":
+                    text_parameters["original_name"] = original_name
 
             # Convert country of origin to location parameters to make the country of origin
             # compatible with the search map feature. This is relevant for asset packs with
             # implied geographical data, such as "country_of_origin" in traffiq and interniq.
-            text_parameters = asset_metadata_json.get("text_parameters", {})
             location_parameters = asset_metadata_json.get("location_parameters", {})
             if (
                 "country_of_origin" in text_parameters
@@ -167,9 +183,10 @@ class LocalJSONProvider(file_provider.FileProvider, asset_provider.AssetProvider
                 type_=asset_data.AssetDataType[asset_metadata_json.get("type", "unknown")],
                 preview_file=asset_metadata_json.get("preview_file", ""),
                 tags=asset_metadata_json.get("tags", []),
+                category_path=category_path,
                 numeric_parameters=asset_metadata_json.get("numeric_parameters", {}),
                 vector_parameters=vector_parameters,
-                text_parameters=asset_metadata_json.get("text_parameters", {}),
+                text_parameters=text_parameters,
                 location_parameters=asset_metadata_json.get("location_parameters", {}),
                 foreign_search_matter=foreign_search_matter,
             )
@@ -253,7 +270,7 @@ class LocalJSONProvider(file_provider.FileProvider, asset_provider.AssetProvider
 
     def map_assets_to_categories(
         self,
-    ) -> collections.defaultdict[asset.AssetID, set[category.CategoryID]]:
+    ) -> collections.defaultdict[asset.AssetID, list[category.CategoryID]]:
         """Returns a mapping of asset ID to category IDs it is in, including parent categories.
 
         Constructed based on 'child_asset_data' and 'child_categories' mappings. These
@@ -268,15 +285,15 @@ class LocalJSONProvider(file_provider.FileProvider, asset_provider.AssetProvider
         def find_parents(category_id, all_parents):
             if category_id in category_parent_mapping:
                 parent = category_parent_mapping[category_id]
-                all_parents.add(parent)
+                all_parents.append(parent)
                 find_parents(parent, all_parents)
 
-        asset_to_categories: collections.defaultdict[asset.AssetID, set[category.CategoryID]] = (
-            collections.defaultdict(set)
+        asset_to_categories: collections.defaultdict[asset.AssetID, list[category.CategoryID]] = (
+            collections.defaultdict(list)
         )
         for category_id, asset_ids in self.child_assets.items():
             for asset_id in asset_ids:
-                asset_to_categories[asset_id].add(category_id)
+                asset_to_categories[asset_id].append(category_id)
                 find_parents(category_id, asset_to_categories[asset_id])
 
         return asset_to_categories

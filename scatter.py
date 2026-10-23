@@ -33,6 +33,9 @@ from . import browser
 from . import panel
 from . import preferences
 
+if typing.TYPE_CHECKING:
+    from bpy._typing import rna_enums
+
 logger = logging.getLogger(f"polygoniq.{__name__}")
 
 
@@ -92,7 +95,9 @@ class AddEmptyScatter(bpy.types.Operator):
     def poll(cls, context: bpy.types.Context) -> bool:
         return context.mode == 'OBJECT' and context.active_object is not None
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         return context.window_manager.invoke_props_dialog(self)
 
     def draw(self, context: bpy.types.Context) -> None:
@@ -111,7 +116,7 @@ class AddEmptyScatter(bpy.types.Operator):
         col.prop(props, "display_percentage")
 
     @polib.utils_bpy.blender_cursor('WAIT')
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         props = preferences.prefs_utils.get_preferences(context).general_preferences.scatter_props
         active_object = context.active_object
         logger.info(f"Working on {active_object.name}")
@@ -184,7 +189,7 @@ class MakeParticleDataUnique(bpy.types.Operator):
     def poll(cls, context: bpy.types.Context) -> bool:
         return asset_helpers.has_active_object_with_particle_system(context)
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         particle_system = context.active_object.particle_systems[self.particle_system_name]
         ps_settings_copy = particle_system.settings.copy()
 
@@ -217,7 +222,7 @@ class ENGON_UL_ScatterAssetsList(bpy.types.UIList):
             layout.label(text=item.name)
             return
 
-        asset_name, _ = item.name.split(":")
+        asset_name = polib.particles_bpy.get_instance_weight_object_name(item)
         split = layout.split(factor=0.8)
         split.label(text=asset_name)
         split.prop(item, "count", text="")
@@ -270,7 +275,7 @@ class ScatterWeightPaint(bpy.types.Operator):
     def poll(cls, context: bpy.types.Context) -> bool:
         return asset_helpers.has_active_object_with_particle_system(context)
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         active_object = context.active_object
         if len(active_object.data.vertices) <= WEIGHT_PAINT_VERTICES_WARNING_THRESHOLD:
             self.report({'WARNING'}, "Subdivide the mesh more for better weight paint results")
@@ -330,7 +335,7 @@ class DuplicateVertexGroupWeights(bpy.types.Operator):
             f"Duplicates {props.target_vertex_group} vertex group weights into a new vertex group"
         )
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         active_object = context.active_object
         particle_system = active_object.particle_systems.active
         vertex_group_name = getattr(particle_system, self.target_vertex_group, "")
@@ -377,7 +382,7 @@ class RenameParticleSystem(bpy.types.Operator):
     def poll(cls, context: bpy.types.Context) -> bool:
         return asset_helpers.has_active_object_with_particle_system(context)
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         if self.old_name == self.new_name:
             return {'FINISHED'}
 
@@ -411,7 +416,9 @@ class RenameParticleSystem(bpy.types.Operator):
         logger.info(f"Renamed particle system {self.old_name} to {self.new_name}")
         return {'FINISHED'}
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         # If the particle system contains prefix "engon_pps", then we know its ours and we
         # treat it without prefix. Otherwise take the full name.
         if polib.asset_pack.is_pps_name(context.active_object.particle_systems.active.name):
@@ -438,7 +445,7 @@ class ReturnToObjectMode(bpy.types.Operator):
     def poll(cls, context: bpy.types.Context) -> bool:
         return context.mode in {'PAINT_WEIGHT', 'PAINT_GPENCIL'}
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         if context.mode != 'OBJECT':
             logger.info(f"Returning from mode {context.mode} to OBJECT mode")
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -460,7 +467,7 @@ class RemoveParticleSystem(bpy.types.Operator):
     def poll(cls, context: bpy.types.Context) -> bool:
         return asset_helpers.has_active_object_with_particle_system(context)
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         active_object = context.active_object
         particle_systems = active_object.particle_systems
         ps_to_remove = particle_systems.active
@@ -550,7 +557,7 @@ class ParticleSystemAppendSelection(bpy.types.Operator):
 
         return True
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         selection = context.selected_objects
         active_object = context.active_object
         active_particle_system = active_object.particle_systems.active
@@ -580,8 +587,7 @@ class ParticleSystemAppendSelection(bpy.types.Operator):
             instance_collection.objects.link(obj)
             logger.info(f"Appended {obj.name}")
 
-        # Update instance collection to propagate changes
-        active_particle_system.settings.instance_collection = instance_collection
+        polib.particles_bpy.refresh_instance_collection(active_particle_system.settings)
         return {'FINISHED'}
 
 
@@ -609,14 +615,15 @@ class ParticleSystemRemoveAsset(bpy.types.Operator):
 
         return True
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         particle_settings: bpy.types.ParticleSettings = (
             context.active_object.particle_systems.active.settings
         )
         instance_collection = particle_settings.instance_collection
         prev_index = particle_settings.active_instanceweight_index
-        # instanceweight.name stores "name: COUNT" for some reason
-        root_object_to_unlink_name, _ = particle_settings.active_instanceweight.name.split(":", 1)
+        root_object_to_unlink_name = polib.particles_bpy.get_instance_weight_object_name(
+            particle_settings.active_instanceweight
+        )
         # instanceweights use the object it has to be in the bpy.data.objects
         assert root_object_to_unlink_name in bpy.data.objects
         root_object_to_unlink = bpy.data.objects.get(root_object_to_unlink_name)
@@ -632,7 +639,7 @@ class ParticleSystemRemoveAsset(bpy.types.Operator):
             # for loop to work (or using .update_tag()), but unfortunately it doesn't.
             # Ideally we would use the bpy.ops.particle.dupliobj_remove(), but only when somebody
             # figures out what is the right context override for that one...
-            particle_settings.instance_collection = instance_collection
+            polib.particles_bpy.refresh_instance_collection(particle_settings)
             # If there is no user or only one user of the object we can assume the particle system
             # is the last user.
             if obj.users <= 1:
@@ -669,7 +676,7 @@ class ParticleSystemRecalculateDensity(bpy.types.Operator):
             and context.active_object.particle_systems.active is not None
         )
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         particle_system = context.active_object.particle_systems.active
         ps_settings = particle_system.settings
         ps_settings.count, overflow = hatchery.utils.get_area_based_particle_count(
@@ -714,9 +721,10 @@ class ParticleSystemRefresh(bpy.types.Operator):
 
         return True
 
-    def execute(self, context: bpy.types.Context):
-        ps_settings = context.active_object.particle_systems.active.settings
-        ps_settings.instance_collection = ps_settings.instance_collection
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
+        polib.particles_bpy.refresh_instance_collection(
+            context.active_object.particle_systems.active.settings
+        )
 
         return {'FINISHED'}
 
@@ -763,10 +771,12 @@ class ParticlesChangeDisplay(bpy.types.Operator):
     )
 
     @classmethod
-    def poll(cls, context: bpy.types.Object) -> bool:
+    def poll(cls, context: bpy.types.Context) -> bool:
         return context.mode == 'OBJECT'
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         return context.window_manager.invoke_props_dialog(self)
 
     def draw(self, context: bpy.types.Context) -> None:
@@ -797,7 +807,7 @@ class ParticlesChangeDisplay(bpy.types.Operator):
             else:
                 return []
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         props = preferences.prefs_utils.get_preferences(context).general_preferences.scatter_props
         particle_systems = []
 
@@ -833,7 +843,7 @@ class SCATTER_MT_Utilities(bpy.types.Menu):
     bl_label = "Scatter Utilities"
     bl_idname = "SCATTER_MT_Utilities"
 
-    def draw(self, context: bpy.types.Context | None) -> None:
+    def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
         layout.operator(RenameParticleSystem.bl_idname, text="Rename", icon='GREASEPENCIL')
         layout.operator("particle.duplicate_particle_system", text="Duplicate", icon='DUPLICATE')
@@ -1132,7 +1142,7 @@ class ScatterTexturePanel(panel.EngonPanelMixin, bpy.types.Panel):
     def draw_header(self, context: bpy.types.Context) -> None:
         self.layout.label(text="", icon='TEXTURE')
 
-    def draw(self, context):
+    def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
         active_object = context.active_object
         particle_system = active_object.particle_systems.active
@@ -1219,7 +1229,7 @@ class ScatterInstancerDetailPanel(panel.EngonPanelMixin, bpy.types.Panel):
             row.operator(ParticleSystemRefresh.bl_idname, text="", icon='FILE_REFRESH')
             return
 
-        orig_name, _ = dupli_object.name.split(":")
+        orig_name = polib.particles_bpy.get_instance_weight_object_name(dupli_object)
         row = layout.row()
         row.label(text=orig_name, icon='OBJECT_DATA')
 

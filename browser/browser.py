@@ -40,6 +40,9 @@ from .. import preferences
 from .. import asset_registry
 from .. import __package__ as base_package
 
+if typing.TYPE_CHECKING:
+    from bpy._typing import rna_enums
+
 logger = logging.getLogger(f"polygoniq.{__name__}")
 
 
@@ -126,7 +129,7 @@ class MAPR_BrowserPreferencesPopoverPanel(bpy.types.Panel):
         for seen_pack in what_is_new_pref.latest_seen_asset_packs:
             col.label(text=f"{seen_pack.name}: {'.'.join(map(str, seen_pack.version))}")
 
-    def draw(self, context: bpy.types.Context):
+    def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
         prefs = preferences.prefs_utils.get_preferences(context).browser_preferences
         col = layout.column()
@@ -165,7 +168,7 @@ class MAPR_BrowserReloadPreviews(bpy.types.Operator):
         row.enabled = False
         row.label(text="Restart Blender if previews are stuck afterwards.")
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         # Blender caches thumbnails that failed to load in the following directory. Blender reloads
         # the directory, if the source file for the previews changes. We remove the directory to
         # force Blender to reload the previews even without changes.
@@ -177,7 +180,9 @@ class MAPR_BrowserReloadPreviews(bpy.types.Operator):
         polib.ui_bpy.tag_areas_redraw(context, {'PREFERENCES'})
         return {'FINISHED'}
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         # In case of popup we want the user to confirm the deletion of the folder.
         if os.path.isdir(FAILED_THUMBNAILS_PATH):
             return context.window_manager.invoke_props_dialog(self, width=500)
@@ -333,7 +338,11 @@ class MAPR_BrowserShowAssetDetail(bpy.types.Operator):
             heading.label(text="Tags", icon='COLOR')
             col = box.column()
             for tag in sorted(self.asset.tags):
-                col.label(text=tag)
+                scope, value = mapr.asset.parse_scoped_tag(tag)
+                if scope is None:
+                    col.label(text=tag)
+                else:
+                    col.label(text=f"{mapr.known_metadata.format_group_name(scope)}: {value}")
         else:
             heading.label(text="No tags found")
 
@@ -355,10 +364,12 @@ class MAPR_BrowserShowAssetDetail(bpy.types.Operator):
             for token, weight in self.asset.search_matter.items():
                 col.label(text=f"{token}: {weight}")
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         return {'FINISHED'}
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         self.asset = asset_registry.instance.master_asset_provider.get_asset(self.asset_id)
         return context.window_manager.invoke_popup(self)
 
@@ -409,6 +420,11 @@ class MAPR_ShowAssetMenu(bpy.types.Operator):
                 spawn.MAPR_BrowserReplaceActiveMaterials.bl_idname, icon='MATERIAL'
             ).asset_id = asset.id_
 
+        if asset.type_ == mapr.asset_data.AssetDataType.blender_world and "HDRI Dome" in asset.tags:
+            col.operator(spawn.MAPR_BrowserSpawnHDRIAsDome.bl_idname, icon='WORLD').asset_id = (
+                asset.id_
+            )
+
         if "Drawable" in asset.tags or asset.id_ in DRAWABLE_GEONODES_ASSET_IDS:
             col.operator(
                 spawn.MAPR_BrowserDrawGeometryNodesAsset.bl_idname, icon='GREASEPENCIL'
@@ -443,7 +459,7 @@ class MAPR_ShowAssetMenu(bpy.types.Operator):
             row.enabled = False
             row.label(text=f"Search score: {mapr.filters.SEARCH_ASSET_SCORE.get(asset.id_, 'n/a')}")
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         asset = asset_registry.instance.master_asset_provider.get_asset(self.asset_id)
         if asset is None:
             logger.error(f"Asset with ID '{self.asset_id}' not found! Cannot open asset menu.")
@@ -467,7 +483,7 @@ class MAPR_ShowMoreAssets(bpy.types.Operator):
     bl_label = "Show More Assets"
     bl_description = "Displays more assets in the browser"
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         filters.asset_repository.lazy_show_more()
         return {'FINISHED'}
 
@@ -494,7 +510,7 @@ class MAPR_SelectAsset(bpy.types.Operator):
         name="Select", description="New selection state", default=True, options={'SKIP_SAVE'}
     )
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         state.get_browser_state(context).select_asset(self.asset_id, self.select)
         polib.ui_bpy.tag_areas_redraw(context, {'PREFERENCES'})
         return {'FINISHED'}
@@ -515,7 +531,7 @@ class MAPR_BrowserSelectDisplayed(bpy.types.Operator):
             text=f"This will select {len(filters.asset_repository.current_assets)} assets, continue?"
         )
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         browser_state = state.get_browser_state(context)
         browser_state.select_asset_range(
             (asset.id_ for asset in filters.asset_repository.current_assets), True
@@ -525,7 +541,9 @@ class MAPR_BrowserSelectDisplayed(bpy.types.Operator):
         polib.ui_bpy.tag_areas_redraw(context, {'PREFERENCES'})
         return {'FINISHED'}
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         if (
             context.area.type != 'PREFERENCES'
             or not preferences.prefs_utils.get_preferences(
@@ -549,7 +567,7 @@ class MAPR_DeselectAll(bpy.types.Operator):
     bl_label = "Deselect All Assets"
     bl_description = "Deselect all assets in the browser"
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         browser_state = state.get_browser_state(context)
         browser_state.select_asset_range(browser_state.selected_asset_ids, False)
         browser_state.reset_active_asset()
@@ -557,7 +575,9 @@ class MAPR_DeselectAll(bpy.types.Operator):
         polib.ui_bpy.tag_areas_redraw(context, {'PREFERENCES'})
         return {'FINISHED'}
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         return context.window_manager.invoke_confirm(self, event)
 
 
@@ -603,10 +623,12 @@ class MAPR_BrowserQuickSearch(bpy.types.Operator):
             row.label(text=f"Searching in category '{current_category.title}'...")
         layout.prop(self, "search", text="", placeholder="Type to search...")
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         return {'FINISHED'}
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         return context.window_manager.invoke_popup(self)
 
 
@@ -908,7 +930,7 @@ class MAPR_EnsureCorrectActivePrefSection(bpy.types.Operator):
     )
     bl_label = "Fix Engon Browser Layout"
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         context.preferences.active_section = 'ADDONS'
         return {'FINISHED'}
 
@@ -933,7 +955,7 @@ class MAPR_BrowserOpen(bpy.types.Operator):
         default=True,
     )
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         area = context.area
         existing_windows = [
             w for w in context.window_manager.windows if w.screen.get(IS_KNOWN_BROWSER_POPUP, False)
@@ -1013,11 +1035,17 @@ class MAPR_BrowserChooseArea(bpy.types.Operator):
     is_running = False
 
     def draw_callback(self, context: bpy.types.Context):
-        region = context.region
-        if region is not None and region == self.region:
+        area = context.area
+        if area is not None and area == self.area:
             original_blend = gpu.state.blend_get()
             gpu.state.blend_set('ALPHA')
-            polib.render_bpy.rectangle((0, 0), (region.width, region.height), (1, 1, 1, 0.3))
+            polib.pq_render_bpy.draw_2d_bpy.draw_rect(
+                0,
+                0,
+                area.width,
+                area.height,
+                fill_col=polib.color_utils_bpy.Color.from_linear(1, 1, 1, 0.3),
+            )
             gpu.state.blend_set(original_blend)
 
     def add_draw_handlers(self, context: bpy.types.Context):
@@ -1045,8 +1073,10 @@ class MAPR_BrowserChooseArea(bpy.types.Operator):
             space_type.draw_handler_remove(handle, region_type)
         MAPR_BrowserChooseArea.handlers.clear()
 
-    def modal(self, context: bpy.types.Context, event: bpy.types.Event):
-        self.area, self.region = polib.ui_bpy.get_mouseovered_region(context, event)
+    def modal(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
+        self.area, _ = polib.ui_bpy.get_mouseovered_region(context, event)
         if self.area is not None:
             self.area.tag_redraw()
 
@@ -1066,9 +1096,10 @@ class MAPR_BrowserChooseArea(bpy.types.Operator):
             return {'CANCELLED'}
         return {'RUNNING_MODAL'}
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         self.area = None
-        self.region = None
         self.area_prev = None
         MAPR_BrowserChooseArea.is_running = True
         self.space_types = polib.ui_bpy.get_all_space_types()
@@ -1124,7 +1155,7 @@ class MAPR_BrowserClose(bpy.types.Operator):
         if window.screen.get(IS_KNOWN_BROWSER_POPUP) is not None:
             del window.screen[IS_KNOWN_BROWSER_POPUP]
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         MAPR_BrowserClose.return_preferences(context)
         return {'FINISHED'}
 
@@ -1149,7 +1180,7 @@ class MAPR_BrowserToggleArea(bpy.types.Operator):
         )
         col.label(text="Do you want to continue?")
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         area = context.area
         # Force open the header region in case it was closed previously
         area.spaces.active.show_region_header = True
@@ -1167,7 +1198,9 @@ class MAPR_BrowserToggleArea(bpy.types.Operator):
 
         return {'FINISHED'}
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         if context.area is None:
             return {'CANCELLED'}
 
@@ -1190,7 +1223,8 @@ class MAPR_BrowserOpenAssetPacksPreferences(bpy.types.Operator):
     bl_description = "Opens Engon preferences with the Asset Packs section opened"
     bl_label = "Open Preferences"
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
+        bpy.ops.screen.userpref_show()
         bpy.ops.preferences.addon_show(module=base_package)
         gen_prefs = preferences.prefs_utils.get_preferences(context).general_preferences
         gen_prefs.show_asset_packs = True

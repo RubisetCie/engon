@@ -11,6 +11,9 @@ from . import utils_bpy
 from . import preview_manager_bpy
 import logging
 
+if typing.TYPE_CHECKING:
+    from bpy._typing import rna_enums
+
 logger = logging.getLogger(f"polygoniq.{__name__}")
 
 
@@ -387,3 +390,19 @@ def draw_conflicting_addons(
         text="This message will disappear after RESTARTING Blender with the conflicting addons removed!"
     )
     sub.label(text="Click documentation button in the corner for more info.", icon='HELP')
+
+
+class ShowPopupBase(bpy.types.Operator):
+    bl_label = "Show Popup"
+    bl_description = "Shows further info in a popup window"
+    bl_options = {'REGISTER'}
+
+    message: bpy.props.StringProperty(default="No message", options={'HIDDEN'})
+
+    title: bpy.props.StringProperty(default="No title", options={'HIDDEN'})
+
+    icon: bpy.props.StringProperty(default='INFO', options={'HIDDEN'})
+
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
+        show_message_box(self.message, self.title, self.icon)
+        return {'FINISHED'}

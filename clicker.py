@@ -32,21 +32,168 @@ from . import hatchery
 from . import panel
 from . import preferences
 
+if typing.TYPE_CHECKING:
+    from bpy._typing import rna_enums
+
 logger = logging.getLogger(f"polygoniq.{__name__}")
 
 
 MODULE_CLASSES: list[type] = []
 
 
+CLICKER_COLLECTION_NAME = "Clicker"
+
 CLICKER_OBJECT_SUFFIX = "_clicker_object"
 CLICKER_INSTANCE_COLLECTION_SUFFIX = "_clicker_instance_collection"
 CLICKER_DUPLICATE_SUFFIX = "_clicker_duplicate"
+
+remembered_weights: dict[str, int] = {}
+
+
+class ClickerObjectWeight(bpy.types.PropertyGroup):
+    # 'name' is inherited from PropertyGroup and stores the model object's name
+    weight: bpy.props.IntProperty(
+        name="Weight",
+        description="Relative probability of this object being placed next, 0 excludes it",
+        min=0,
+        default=1,
+    )
+
+
+MODULE_CLASSES.append(ClickerObjectWeight)
+
+
+def get_object_weights(context: bpy.types.Context) -> bpy.types.bpy_prop_collection:
+    return context.window_manager.pq_clicker_object_weights
+
+
+def populate_object_weights(
+    context: bpy.types.Context,
+    objects: typing.Iterable[bpy.types.Object],
+    remember_weights: bool = True,
+) -> None:
+    weights = get_object_weights(context)
+    remembered_weights.update({entry.name: entry.weight for entry in weights})
+    weights.clear()
+
+    for obj in objects:
+        entry = weights.add()
+        entry.name = obj.name
+        if remember_weights:
+            entry.weight = remembered_weights.get(obj.name, 1)
+
+    # Previous session may have left an index pointing past the new (possibly shorter) list.
+    context.window_manager.pq_clicker_active_weight_index = 0
+
+
+def choose_weighted_random_object(
+    context: bpy.types.Context,
+    original_names: dict[bpy.types.Object, str],
+    exclude: list[bpy.types.Object] | None = None,
+) -> bpy.types.Object:
+    """Picks from keys of 'original_names', weights are looked up by the mapped original name."""
+    weights_by_name = {entry.name: entry.weight for entry in get_object_weights(context)}
+    # Weight 0 means "never place this", so it wins over the 'exclude' request below.
+    candidates = [obj for obj, name in original_names.items() if weights_by_name.get(name, 1) > 0]
+    if len(candidates) == 0:
+        # All weights are 0 - treat the list as unweighted instead of refusing to pick.
+        candidates = list(original_names)
+
+    non_excluded = (
+        candidates if exclude is None else [obj for obj in candidates if obj not in exclude]
+    )
+    # Only honor 'exclude' if it doesn't empty the candidate set (single-object run).
+    if len(non_excluded) > 0:
+        candidates = non_excluded
+
+    weights = [max(weights_by_name.get(original_names[obj], 1), 1) for obj in candidates]
+    return random.choices(candidates, weights=weights, k=1)[0]
+
+
+def set_root_origin_to_bottom(root: bpy.types.Object) -> None:
+    if root.type != 'MESH':
+        return
+
+    # Freeze original matrices of child objects
+    # Changing parent's matrix will change the child's matrix, so we need to revert to the original later
+    child_to_matrix_map = {obj: obj.matrix_world.copy() for obj in root.children}
+
+    bbox = hatchery.bounding_box.BoundingBox()
+    bbox.extend_by_object(root)
+    eccentricity = bbox.get_eccentricity()
+    offset = bbox.get_min() + mathutils.Vector((eccentricity.x, eccentricity.y, 0.0))
+    offset_local = root.matrix_world.inverted() @ offset
+    root.data.transform(mathutils.Matrix.Translation(-offset_local))
+    root.matrix_world.translation = offset
+
+    for obj, matrix in child_to_matrix_map.items():
+        obj.matrix_world = matrix
+
+
+def prepare_instanced_objects(
+    context: bpy.types.Context,
+    root_objs: set[bpy.types.Object],
+    models_collection: bpy.types.Collection,
+) -> dict[bpy.types.Object, str]:
+    """Prepare a set of root objects for instancing. Populates 'models_collection'.
+
+    Returns mapping of the prepared model objects to the names of their original objects.
+
+    In case of instanced objects, create a new baseline copy that will be instanced.
+    In case of editable objects, duplicate the hierarchy and wrap the hierarchy into a collection
+    that will be then instanced.
+    """
+    clicker_props = get_clicker_props(context)
+    original_names: dict[bpy.types.Object, str] = {}
+    for obj in root_objs:
+        if (
+            obj.type == 'EMPTY'
+            and obj.instance_collection is not None
+            and obj.instance_type == 'COLLECTION'
+        ):
+            # Don't use the original object, copy the instanced collection
+            obj_copy = obj.copy()
+            # Add suffix to the name so it doesn't mess up suffixes of spawned models
+            obj_copy.name = f"{obj.name}{CLICKER_OBJECT_SUFFIX}"
+            models_collection.objects.link(obj_copy)
+            original_names[obj_copy] = obj.name
+        else:
+            # Create a new collection for the object's hierarchy and instance the empty
+            # out of the editable objects.
+            coll = bpy.data.collections.new(f"{obj.name}{CLICKER_INSTANCE_COLLECTION_SUFFIX}")
+            hierarchy = list(polib.asset_pack_bpy.get_entire_object_hierarchy(obj))
+            with context.temp_override(selected_objects=hierarchy, undo=False):
+                # We can link mesh data only if we don't need to adjust the origin
+                prev_scene_objects = set(context.scene.objects)
+                bpy.ops.object.duplicate(linked=not clicker_props.origin_to_bottom)
+                duplicate_objs = set(context.scene.objects) - prev_scene_objects
+                for dup_obj in duplicate_objs:
+                    # Add suffixes to all duplicates so they don't mess up suffixes of spawned models
+                    dup_obj.name = f"{dup_obj.name}{CLICKER_DUPLICATE_SUFFIX}"
+                new_root = polib.asset_pack_bpy.find_root_objects(
+                    duplicate_objs, only_polygoniq=False
+                ).pop()
+
+            if clicker_props.origin_to_bottom:
+                set_root_origin_to_bottom(new_root)
+
+            new_root.location = (0, 0, 0)
+
+            polib.asset_pack_bpy.collection_link_hierarchy(coll, new_root)
+
+            empty = bpy.data.objects.new(f"{obj.name}{CLICKER_OBJECT_SUFFIX}", None)
+            empty.instance_type = 'COLLECTION'
+            empty.instance_collection = coll
+            models_collection.objects.link(empty)
+            original_names[empty] = obj.name
+
+    return original_names
 
 
 def get_target_collection(context: bpy.types.Context) -> bpy.types.Collection:
     if context.scene.pq_clicker_target_collection is None:
         context.scene.pq_clicker_target_collection = polib.asset_pack_bpy.collection_get(
-            context, "Clicker"
+            context, CLICKER_COLLECTION_NAME
         )
     return context.scene.pq_clicker_target_collection
 
@@ -88,15 +235,18 @@ class Clicker(bpy.types.Operator):
     SCALE_SPEED = 0.01
 
     draw_2d_handler_ref = None
+    ui_layout = None
 
     is_running = False
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.models_collection: bpy.types.Collection | None = None
+        self.model_original_names: dict[bpy.types.Object, str] = {}
         self.target_collection: bpy.types.Collection | None = None
         self.collision_collection = bpy.context.scene.collection
 
+        self.chosen_object: bpy.types.Object | None = None
         self.current_object: bpy.types.Object | None = None
         self.placed_object: bpy.types.Object | None = None
         self.initial_selected_objects: set[bpy.types.Object] = set()
@@ -112,6 +262,55 @@ class Clicker(bpy.types.Operator):
         # Properties controlling the UI state - e. g. tint of the buttons, based on the events
         self.is_scaling = False
 
+        if type(self).ui_layout is None:
+            type(self)._init_ui_layout()
+
+    @classmethod
+    def _init_ui_layout(cls) -> None:
+        ui = polib.pq_render_bpy.ui_bpy
+        styles = polib.pq_render_bpy.styles
+        comp = polib.pq_render_bpy.components_bpy
+
+        MB = comp.MouseButton
+        MA = comp.MouseArrow
+        Mouse = comp.InputCombo.Mouse
+        Key = comp.InputCombo.Key
+
+        cls.ui_place = comp.InputCombo("Place object", [Mouse(buttons=MB.LEFT)])
+        cls.ui_rotate = comp.InputCombo(
+            "Rotate", [Mouse(buttons=MB.LEFT, arrows=MA.LEFT | MA.RIGHT)]
+        )
+        cls.ui_scale = comp.InputCombo(
+            "Scale",
+            [Mouse(buttons=MB.LEFT, arrows=MA.LEFT | MA.RIGHT), Key(comp.ALT_KEY)],
+        )
+        cls.ui_ctrl_key = comp.InputCombo("Align to surface (Hold)", [Key(comp.CTRL_KEY)])
+        cls.ui_random_key = comp.InputCombo("Select random object", [Key("R")])
+        cls.ui_exit_key = comp.InputCombo("Exit", [Key(comp.ESCAPE_KEY)])
+
+        cls.ui_layout = ui.RootFixed(
+            [
+                ui.Flex(
+                    style=styles.StyleFlex(
+                        anchor=styles.Anchor.BOTTOM_LEFT,
+                        width=styles.SizeMode.FULL,
+                        padding=(20, 10),
+                        gap=30,
+                        justify_content=styles.JustifyContent.CENTER,
+                    ),
+                    children=[
+                        cls.ui_place,
+                        cls.ui_rotate,
+                        cls.ui_scale,
+                        cls.ui_ctrl_key,
+                        cls.ui_random_key,
+                        cls.ui_exit_key,
+                    ],
+                )
+            ],
+            avoid_ui_region_overlap=True,
+        )
+
     @staticmethod
     def remove_draw_handlers() -> None:
         if hasattr(Clicker, "draw_2d_handler_ref") and Clicker.draw_2d_handler_ref is not None:
@@ -122,55 +321,20 @@ class Clicker(bpy.types.Operator):
         Clicker.remove_draw_handlers()
 
     def draw_px(self):
+        cls = type(self)
+        assert cls.ui_layout is not None
+
+        # Update dynamic state
         clicker_props = get_clicker_props(bpy.context)
-        ui_scale = bpy.context.preferences.system.ui_scale
-        half_width = bpy.context.region.width / 2.0
-
-        polib.render_bpy.mouse_info(
-            half_width - 440 * ui_scale,
-            20,
-            "Place object",
-            left_click=True,
+        ctrl_key = cls.ui_ctrl_key.symbols[0]
+        ctrl_key.pressed = clicker_props.align_to_surface
+        scale_key = cls.ui_scale.symbols[1]
+        scale_key.pressed = self.is_scaling
+        cls.ui_random_key.style.hidden = (
+            self.models_collection is None or len(self.models_collection.objects) <= 1
         )
 
-        polib.render_bpy.mouse_info(
-            half_width - 300 * ui_scale,
-            20,
-            "Rotate",
-            left_click=True,
-            indicate_left=True,
-            indicate_right=True,
-        )
-
-        # Click and hold ALT
-        polib.render_bpy.mouse_info(
-            half_width - 200 * ui_scale,
-            20,
-            "",
-            left_click=True,
-            indicate_left=True,
-            indicate_right=True,
-        )
-        polib.render_bpy.key_info(
-            half_width - 175 * ui_scale,
-            20,
-            polib.render_bpy.ALT_KEY,
-            "Scale",
-            pressed=self.is_scaling,
-        )
-
-        polib.render_bpy.key_info(
-            half_width - 90 * ui_scale,
-            20,
-            polib.render_bpy.CTRL_KEY,
-            "Align to surface (Hold)",
-            pressed=clicker_props.align_to_surface,
-        )
-        polib.render_bpy.key_info(half_width + 120 * ui_scale, 20, "R", "Select random object")
-
-        polib.render_bpy.key_info(
-            half_width + 330 * ui_scale, 20, polib.render_bpy.ESCAPE_KEY, "Exit"
-        )
+        cls.ui_layout.draw()
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -181,7 +345,7 @@ class Clicker(bpy.types.Operator):
             and context.mode == 'OBJECT'
         )
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         return {'FINISHED'}
 
     def _cleanup(
@@ -212,7 +376,9 @@ class Clicker(bpy.types.Operator):
         return {'CANCELLED'}
 
     @polib.utils_bpy.safe_modal(on_exception=_cleanup)
-    def modal(self, context: bpy.types.Context, event: bpy.types.Event):
+    def modal(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         if self.current_object is None:
             self.report({'ERROR'}, "No object to place, select at least one object.")
             return {'CANCELLED'}
@@ -257,9 +423,9 @@ class Clicker(bpy.types.Operator):
                 self.choose_next_object(context)
             return {'RUNNING_MODAL'}
 
-        elif event.type == 'R':
+        elif event.type == 'R' and len(self.models_collection.objects) > 1:
             if event.value == 'RELEASE':
-                self.choose_next_object(context)
+                self.choose_next_object(context, allow_same_object=False)
                 self.update_current_object_transform(context, event)
 
             return {'RUNNING_MODAL'}
@@ -354,12 +520,19 @@ class Clicker(bpy.types.Operator):
         polib.asset_pack_bpy.collection_add_object(self.target_collection, self.placed_object)
         self.current_object.hide_viewport = True
         self.place_mouse_position = mathutils.Vector([event.mouse_region_x, event.mouse_region_y])
+        bpy.context.view_layer.objects.active = self.placed_object
         logger.info(f"Object placed: '{self.placed_object.name}'")
 
-    def choose_next_object(self, context: bpy.types.Context) -> None:
+    def choose_next_object(
+        self, context: bpy.types.Context, allow_same_object: bool = True
+    ) -> None:
+        assert (
+            len(self.models_collection.objects) > 0
+        ), "There should be at least one object to choose from"
         clicker_props = get_clicker_props(context)
         if self.current_object is not None:
             bpy.data.objects.remove(self.current_object)
+            self.current_object = None
 
         # If there was a previously placed object, choosing next object starts right after it was
         # finished - it's rotation and scale is set, and we can log the information.
@@ -370,13 +543,16 @@ class Clicker(bpy.types.Operator):
             )
 
         self.current_object_hierarchy_names.clear()
-        random_object = random.choice(self.models_collection.objects)
-        self.current_object = random_object.copy()
-        assert self.current_object is not None
-
-        name, _, _ = self.current_object.name.partition(CLICKER_OBJECT_SUFFIX)
+        self.chosen_object = choose_weighted_random_object(
+            context,
+            self.model_original_names,
+            exclude=(
+                None if allow_same_object or self.chosen_object is None else [self.chosen_object]
+            ),
+        )
+        self.current_object = self.chosen_object.copy()
         # Create a temp object to automatically get the next name with its suffix for the current object
-        tmp_obj = bpy.data.objects.new(name, None)
+        tmp_obj = bpy.data.objects.new(self.model_original_names[self.chosen_object], None)
         new_name = tmp_obj.name
         bpy.data.objects.remove(tmp_obj)
         self.current_object.name = new_name
@@ -423,82 +599,17 @@ class Clicker(bpy.types.Operator):
 
         logger.info(f"Chosen next object: '{self.current_object.name}'")
 
-    def set_root_origin_to_bottom(self, root: bpy.types.Object) -> None:
-        if root.type != 'MESH':
-            return
-
-        # Freeze original matrices of child objects
-        # Changing parent's matrix will change the child's matrix, so we need to revert to the original later
-        child_to_matrix_map = {obj: obj.matrix_world.copy() for obj in root.children}
-
-        bbox = hatchery.bounding_box.BoundingBox()
-        bbox.extend_by_object(root)
-        eccentricity = bbox.get_eccentricity()
-        offset = bbox.get_min() + mathutils.Vector((eccentricity.x, eccentricity.y, 0.0))
-        offset_local = root.matrix_world.inverted() @ offset
-        root.data.transform(mathutils.Matrix.Translation(-offset_local))
-        root.matrix_world.translation = offset
-
-        for obj, matrix in child_to_matrix_map.items():
-            obj.matrix_world = matrix
-
-    def prepare_instanced_objects(
-        self, context: bpy.types.Context, root_objs: set[bpy.types.Object]
-    ) -> None:
-        """Prepare a set of root objects for instancing. Populates the 'self.models_collection'.
-
-        In case of instanced objects, create a new baseline copy that will be instanced.
-        In case of editable objects, duplicate the hierarchy and wrap the hierarchy into a collection
-        that will be then instanced.
-        """
-        clicker_props = get_clicker_props(context)
-        for obj in root_objs:
-            if (
-                obj.type == 'EMPTY'
-                and obj.instance_collection is not None
-                and obj.instance_type == 'COLLECTION'
-            ):
-                # Don't use the original object, copy the instanced collection
-                obj_copy = obj.copy()
-                # Add suffix to the name so it doesn't mess up suffixes of spawned models
-                obj_copy.name = f"{obj.name}{CLICKER_OBJECT_SUFFIX}"
-                self.models_collection.objects.link(obj_copy)
-            else:
-                # Create a new collection for the object's hierarchy and instance the empty
-                # out of the editable objects.
-                coll = bpy.data.collections.new(f"{obj.name}{CLICKER_INSTANCE_COLLECTION_SUFFIX}")
-                hierarchy = list(polib.asset_pack_bpy.get_entire_object_hierarchy(obj))
-                with context.temp_override(selected_objects=hierarchy, undo=False):
-                    # We can link mesh data only if we don't need to adjust the origin
-                    prev_scene_objects = set(context.scene.objects)
-                    bpy.ops.object.duplicate(linked=not clicker_props.origin_to_bottom)
-                    duplicate_objs = set(context.scene.objects) - prev_scene_objects
-                    for dup_obj in duplicate_objs:
-                        # Add suffixes to all duplicates so they don't mess up suffixes of spawned models
-                        dup_obj.name = f"{dup_obj.name}{CLICKER_DUPLICATE_SUFFIX}"
-                    new_root = polib.asset_pack_bpy.find_root_objects(
-                        duplicate_objs, only_polygoniq=False
-                    ).pop()
-
-                if clicker_props.origin_to_bottom:
-                    self.set_root_origin_to_bottom(new_root)
-
-                new_root.location = (0, 0, 0)
-
-                polib.asset_pack_bpy.collection_link_hierarchy(coll, new_root)
-
-                empty = bpy.data.objects.new(f"{obj.name}{CLICKER_OBJECT_SUFFIX}", None)
-                empty.instance_type = 'COLLECTION'
-                empty.instance_collection = coll
-                self.models_collection.objects.link(empty)
-
-    def cancel(self, context: bpy.types.Context):
+    def cancel(self, context: bpy.types.Context) -> None:
         self._cleanup(context)
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         if Clicker.is_running:
             logger.error("Another instance of the clicker operator is already running!")
             return {'CANCELLED'}
+
+        clicker_props = get_clicker_props(context)
 
         models_collection = polib.asset_pack_bpy.collection_get(context, "tmp_Clicker_Models")
         # Let's not make the tmp collection visible in the outliner
@@ -516,7 +627,10 @@ class Clicker(bpy.types.Operator):
         self.target_collection = get_target_collection(context)
         self.collision_collection = get_collision_collection(context)
 
-        self.prepare_instanced_objects(context, root_objs)
+        self.model_original_names = prepare_instanced_objects(
+            context, root_objs, self.models_collection
+        )
+        populate_object_weights(context, root_objs, remember_weights=clicker_props.remember_weights)
 
         self.models_collection.hide_render = True
         self.models_collection.hide_viewport = True
@@ -569,6 +683,29 @@ class Clicker(bpy.types.Operator):
 MODULE_CLASSES.append(Clicker)
 
 
+class ENGON_UL_ClickerObjectsList(bpy.types.UIList):
+    """Displays a single object's weight entry in the Clicker N-panel."""
+
+    def draw_item(
+        self,
+        context: bpy.types.Context,
+        layout: bpy.types.UILayout,
+        data: typing.Any,
+        item: ClickerObjectWeight,
+        icon: int,
+        active_data: typing.Any,
+        active_propname: str,
+        index: int,
+        flt_flag: int,
+    ) -> None:
+        row = layout.row(align=True)
+        row.label(text=item.name, icon='OBJECT_DATA')
+        row.prop(item, "weight", text="")
+
+
+MODULE_CLASSES.append(ENGON_UL_ClickerObjectsList)
+
+
 @polib.log_helpers_bpy.logged_panel
 class ClickerPanel(panel.EngonPanelMixin, bpy.types.Panel):
     bl_idname = "VIEW_3D_PT_engon_clicker"
@@ -610,6 +747,21 @@ class ClickerPanel(panel.EngonPanelMixin, bpy.types.Panel):
         col.prop(props, "random_tilt")
         col.prop(props, "random_scale")
 
+        layout.prop(props, "remember_weights")
+
+        wm = context.window_manager
+        if Clicker.is_running and len(wm.pq_clicker_object_weights) > 0:
+            col = layout.column(align=True)
+            col.label(text="Object Weights")
+            col.template_list(
+                "ENGON_UL_ClickerObjectsList",
+                "",
+                wm,
+                "pq_clicker_object_weights",
+                wm,
+                "pq_clicker_active_weight_index",
+            )
+
 
 MODULE_CLASSES.append(ClickerPanel)
 
@@ -633,9 +785,22 @@ def register():
     for cls in MODULE_CLASSES:
         bpy.utils.register_class(cls)
 
+    bpy.types.WindowManager.pq_clicker_object_weights = bpy.props.CollectionProperty(
+        name="Clicker Object Weights",
+        type=ClickerObjectWeight,
+    )
+    bpy.types.WindowManager.pq_clicker_active_weight_index = bpy.props.IntProperty(
+        name="Active Clicker Object Weight Index",
+        default=0,
+    )
+
 
 def unregister():
     Clicker.remove_draw_handlers()
+
+    del bpy.types.WindowManager.pq_clicker_active_weight_index
+    del bpy.types.WindowManager.pq_clicker_object_weights
+
     for cls in reversed(MODULE_CLASSES):
         bpy.utils.unregister_class(cls)
 

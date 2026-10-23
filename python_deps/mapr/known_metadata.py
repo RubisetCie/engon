@@ -7,17 +7,31 @@ from . import country_locations
 # Keep in mind that in addition to these, assets can have tags not on this list!
 # Default tags search weight: 1.0
 TAGS = {
+    "Accessory": {"description": ""},
+    "AI Assisted": {"description": "Asset that was created or modified using AI tools"},
+    "Adult": {"description": ""},
+    "Afro-descendant": {"description": ""},
+    "Animal": {"description": ""},
     "Bathroom": {"description": ""},
     "Bedroom": {"description": ""},
+    "Buildable": {"description": "Asset can be used modally as a building block"},
     "Cafe": {"description": ""},
+    "Cargo": {"description": ""},
+    "Cat": {"description": ""},
+    "Caucasian": {"description": ""},
+    "Child": {"description": ""},
     "Decoration": {"description": ""},
     "Dining": {"description": ""},
+    "Dog": {"description": ""},
+    "East-Asian": {"description": ""},
     "Electronics": {"description": ""},
     "Enterprise": {"description": ""},
     "Entertainment": {"description": ""},
     "Textiles": {"description": ""},
+    "Female": {"description": ""},
     "Furniture": {"description": ""},
     "Hallway": {"description": ""},
+    "Holding Object": {"description": ""},
     "Indoor": {"description": ""},
     "Kids": {"description": ""},
     "Kitchen": {"description": ""},
@@ -25,21 +39,32 @@ TAGS = {
     "Lights": {"description": ""},
     "Living room": {"description": ""},
     "Lobby": {"description": ""},
+    "Male": {"description": ""},
     "Music": {"description": ""},
     "Office": {"description": ""},
     "Outdoor": {"description": ""},
     "Park": {"description": ""},
     "Playground": {"description": ""},
+    "Ready-Made": {"description": ""},
     "Restaurant": {"description": ""},
     "Rigged": {"description": "Asset that has a rig for animation"},
     "Utilities": {"description": ""},
     "Sanitary": {"description": ""},
+    "Senior": {"description": ""},
+    "Sitting": {"description": ""},
+    "South-Asian": {"description": ""},
     "Spring": {"description": ""},
+    "Standing": {"description": ""},
+    "Streetwear": {"description": ""},
     "Summer": {"description": ""},
+    "Talking": {"description": ""},
     "Autumn": {"description": ""},
+    "Walking": {"description": ""},
     "Winter": {"description": ""},
+    "Workwear": {"description": ""},
     "Drawable": {"description": "Asset that can be drawn using pen tools"},
     "Photoscan": {"description": "Assets created using photogrammetry"},
+    "HDRI Dome": {"description": "HDRI asset that can be spawned as a dome in the scene"},
 }
 
 # Which numeric parameters can be added to assets in grumpy_cat. Each maps to a dictionary with more
@@ -131,6 +156,11 @@ TEXT_PARAMETERS = {
     },
     "bpy.data.version": {
         "description": "Which version of the .blend format was used for this asset",
+        "show_filter": False,
+    },
+    "original_name": {
+        "description": "Name of the original .blend file",
+        "search_weight": 1.0,
         "show_filter": False,
     },
     "copyright": {
@@ -317,6 +347,11 @@ TEXT_PARAMETERS = {
         "search_weight": 0.25,
         "show_filter": False,
     },
+    # Deprecated hidden parameters
+    "shadow_method": {
+        "search_weight": 0.0,
+        "show_filter": False,
+    },
 }
 
 
@@ -420,7 +455,6 @@ PARAMETER_GROUPING = {
     ],
     "material": [
         "text:blend_method",
-        "text:shadow_method",
         "text:displacement_method",
         "num:metallic",
         "num:roughness",

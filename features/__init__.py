@@ -33,6 +33,8 @@ from . import botaniq_adjustments
 from . import botaniq_animations
 from . import curve_scatter
 
+from . import materialiq_hdri
+
 from . import traffiq_paint_adjustments
 from . import traffiq_wear
 from . import traffiq_lights_settings
@@ -46,8 +48,11 @@ from . import sculpture_wear
 
 from . import road_generator
 from . import vine_generator
+from . import branch_and_leaves_masking
 from . import river_generator
 from . import rain_generator
+
+from . import crowd_generator
 
 from . import frame_generator
 
@@ -69,6 +74,8 @@ def register():
     botaniq_animations.register()
     curve_scatter.register()
 
+    materialiq_hdri.register()
+
     traffiq_paint_adjustments.register()
     traffiq_wear.register()
     traffiq_lights_settings.register()
@@ -82,8 +89,11 @@ def register():
     emergency_lights.register()
     road_generator.register()
     vine_generator.register()
+    branch_and_leaves_masking.register()
     river_generator.register()
     rain_generator.register()
+
+    crowd_generator.register()
 
     frame_generator.register()
 
@@ -94,8 +104,10 @@ def unregister():
     feature_pie_menu.unregister()
 
     frame_generator.unregister()
+    crowd_generator.unregister()
     rain_generator.unregister()
     river_generator.unregister()
+    branch_and_leaves_masking.unregister()
     vine_generator.unregister()
     road_generator.unregister()
     emergency_lights.unregister()
@@ -109,6 +121,8 @@ def unregister():
     traffiq_lights_settings.unregister()
     traffiq_wear.unregister()
     traffiq_paint_adjustments.unregister()
+
+    materialiq_hdri.unregister()
 
     curve_scatter.unregister()
     botaniq_animations.unregister()

@@ -20,6 +20,7 @@ from . import utils_bpy
 from . import rigs_shared_bpy
 from . import custom_props_bpy
 from . import node_utils_bpy
+from . import geonodes_mod_utils_bpy
 
 
 def get_all_object_ancestors(obj: bpy.types.Object) -> typing.Iterable[bpy.types.Object]:
@@ -175,7 +176,7 @@ def is_traffiq_asset_part(obj: bpy.types.Object, part: TraffiqAssetPart) -> bool
         _, obj_part_name, position, number = split_name
         if obj_part_name != part:
             return False
-        if position not in {"FL", "FR", "BL", "BR", "F", "B"}:
+        if position not in {"FL", "FR", "BL", "BR", "F", "B", "TL", "TR", "T"}:
             return False
         if not number.isdigit():
             return False
@@ -326,11 +327,13 @@ def decompose_traffiq_vehicle(obj: bpy.types.Object) -> DecomposedCar | None:
             brakes.append(hierarchy_obj)
         elif is_traffiq_asset_part(hierarchy_obj, TraffiqAssetPart.LicensePlate):
             _, suffix = utils_bpy.remove_object_duplicate_suffix(hierarchy_obj.name).rsplit("_", 1)
-            license_plate = (
-                hierarchy_obj
-                if hierarchy_obj.instance_type == 'COLLECTION'
-                else hierarchy_obj.children[0]
-            )
+            # License plate can be an instance collection, single object parented to an empty (legacy) or just a single object.
+            if hierarchy_obj.instance_type == 'COLLECTION':
+                license_plate = hierarchy_obj
+            elif hierarchy_obj.type == 'EMPTY' and len(hierarchy_obj.children) > 0:
+                license_plate = hierarchy_obj.children[0]
+            else:
+                license_plate = hierarchy_obj
             if suffix == "F":
                 front_license_plate = license_plate
             elif suffix == "B":
@@ -469,14 +472,72 @@ def make_selection_editable(
             original_armature_name = utils_bpy.remove_object_duplicate_suffix(obj.data.name)
             result[original_armature_name].append(obj)
 
+    def get_lights_to_objects_map(
+        obj: bpy.types.Object, result: collections.defaultdict[str, list[bpy.types.ID]]
+    ) -> None:
+        for child in obj.children:
+            get_lights_to_objects_map(child, result)
+
+        if obj.type == 'LIGHT' and obj.data is not None:
+            original_light_name = utils_bpy.remove_object_duplicate_suffix(obj.data.name)
+            result[original_light_name].append(obj)
+
+    def get_actions_to_animation_data_map(
+        obj: bpy.types.Object, result: collections.defaultdict[str, list[bpy.types.ID]]
+    ) -> None:
+        for child in obj.children:
+            get_actions_to_animation_data_map(child, result)
+
+        # Both the object and its data can carry their own action, a light object animates its
+        # transform while the light data animates energy for example.
+        for owner in (obj, obj.data):
+            # 'obj.data' is None for empties and not every ID type supports animation data
+            animation_data = getattr(owner, "animation_data", None)
+            if animation_data is None or animation_data.action is None:
+                continue
+
+            original_action_name = utils_bpy.remove_object_duplicate_suffix(
+                animation_data.action.name
+            )
+            # Animation data can be shared across the hierarchy, the same animation
+            # data must not be counted twice when deciding whether the action is used elsewhere.
+            if animation_data not in result[original_action_name]:
+                result[original_action_name].append(animation_data)
+
+    def assign_action_keep_slot(animation_data: bpy.types.AnimData, action: bpy.types.ID) -> None:
+        """Assigns 'action' to 'animation_data' and rebinds the action slot it was bound to.
+
+        Assigning an action clears the action slot binding, without rebinding it the owner ends up
+        with an action but no animation.
+        """
+        slot_identifier = None
+        if bpy.app.version >= (4, 4, 0) and animation_data.action_slot is not None:
+            slot_identifier = animation_data.action_slot.identifier
+
+        animation_data.action = action
+        if slot_identifier is None:
+            return
+
+        slot = next((s for s in action.slots if s.identifier == slot_identifier), None)
+        if slot is None:
+            logger.warning(
+                f"Action slot '{slot_identifier}' is missing in the local copy of action "
+                f"'{action.name}', its animation may be lost."
+            )
+            return
+
+        animation_data.action_slot = slot
+
     GetNameToUsersMapCallable = typing.Callable[
         [bpy.types.Object, collections.defaultdict[str, list[bpy.types.ID]]], None
     ]
+    AssignDatablockCallable = typing.Callable[[typing.Any, bpy.types.ID], None]
 
     def make_datablocks_unique_per_object(
         obj: bpy.types.Object,
         get_data_to_struct_map: GetNameToUsersMapCallable,
         datablock_name: str,
+        assign_datablock: AssignDatablockCallable | None = None,
     ) -> dict[bpy.types.ID, bpy.types.ID]:
         old_new_datablock_map = {}
         datablocks_to_owner_structs: collections.defaultdict[str, list[bpy.types.ID]] = (
@@ -489,13 +550,19 @@ def make_selection_editable(
                 continue
 
             first_datablock = getattr(owner_structs[0], datablock_name)
-            if first_datablock.library is None and first_datablock.users == len(owner_structs):
+            # Fake user counts towards 'users' but doesn't mean the datablock is used by another
+            # owner. Actions are flagged with it most of the time, meshes or materials rarely.
+            real_users = first_datablock.users - (1 if first_datablock.use_fake_user else 0)
+            if first_datablock.library is None and real_users == len(owner_structs):
                 continue
 
             # data block is linked from library or it is used outside of object 'obj' -> create copy
             datablock_duplicate = first_datablock.copy()
             for owner_struct in owner_structs:
-                setattr(owner_struct, datablock_name, datablock_duplicate)
+                if assign_datablock is None:
+                    setattr(owner_struct, datablock_name, datablock_duplicate)
+                else:
+                    assign_datablock(owner_struct, datablock_duplicate)
                 old_new_datablock_map[first_datablock] = datablock_duplicate
         return old_new_datablock_map
 
@@ -541,39 +608,55 @@ def make_selection_editable(
                 mod.node_group
             ).items():
                 if node_utils_bpy.get_socket_type(input_) == 'NodeSocketMaterial':
-                    mat = mod[input_.identifier]
+                    mat = geonodes_mod_utils_bpy.get_mod_input_value(mod, input_.identifier)
                     new_mat = old_new_material_map.get(mat)
                     # We enforce materials referenced in geonodes to be present in object material
                     # slots, but this operator can be used for non-polygoniq assets as well.
                     if new_mat is not None:
-                        mod[input_identifier] = new_mat
+                        geonodes_mod_utils_bpy.set_mod_input_value(mod, input_identifier, new_mat)
 
-    def copy_constraints_from_instance_to_realized(
+    def copy_animations_and_constraints_from_instance_to_realized(
         source_obj: bpy.types.Object,
         target_obj: bpy.types.Object,
         instanced_to_realized_name_map: dict[bpy.types.Object, bpy.types.Object],
+        copy_between_realized_objects: bool = False,
     ) -> None:
-        """Copy constraints from 'source_obj' to 'target_obj' recursively.
+        """Copy animations and constraints from 'source_obj' to 'target_obj' recursively.
 
-        Constraints are not preserved when using 'duplicates_make_real' operator. This function
-        copies constraints from 'source_obj' to 'target_obj' and for all their children.
+        Animation actions and constraints are not preserved when using 'duplicates_make_real'
+        operator. This function copies them from 'source_obj' to 'target_obj' and for all their
+        children.
 
         Special handling is needed for 'targets' property of constraints, as it is a bpy collection.
         This is not an exhaustive implementation for all constraint types, but it covers all known
         constraints used in our assets for now.
 
+        When we want to copy constraints between two realized objects, setting the 'copy_between_realized_objects'
+        to True will skip some asserts, as we can't rely on names and types to be the same
+        (e.g. copying from empty to child object).
+
         This function asserts that 'source_obj' and 'target_obj' have the same name, type and children,
         as it counts on 'target_obj' being a realized copy of 'source_obj'.
         """
-        assert utils_bpy.remove_object_duplicate_suffix(
-            source_obj.name
-        ) == utils_bpy.remove_object_duplicate_suffix(target_obj.name)
-        if source_obj.type != target_obj.type:
-            logger.warning(
-                f"Expected realized object '{target_obj.name}' of type '{target_obj.type}' and "
-                f"instance object '{source_obj.name}' of type '{source_obj.type}' to share the same type."
-            )
-            return
+        if not copy_between_realized_objects:
+            assert utils_bpy.remove_object_duplicate_suffix(
+                source_obj.name
+            ) == utils_bpy.remove_object_duplicate_suffix(target_obj.name)
+            if source_obj.type != target_obj.type:
+                logger.warning(
+                    f"Expected realized object '{target_obj.name}' of type '{target_obj.type}' and "
+                    f"instance object '{source_obj.name}' of type '{source_obj.type}' to share the same type."
+                )
+                return
+
+        # 'duplicates_make_real' already bakes the posed (not in rest pose, constraint-evaluated) transform into
+        # 'target_obj'. If we now copy the constraints as-is, they get evaluated again on top of
+        # that already-posed transform and the pose ends up applied twice (e.g. a 30 degree
+        # rotation becomes 60 degrees). We remember the correct world matrix here so we can
+        # compensate for that once the constraints are copied.
+        unconstrained_world_matrix = None
+        if not copy_between_realized_objects and len(source_obj.constraints) > 0:
+            unconstrained_world_matrix = target_obj.matrix_world.copy()
 
         for source_constraint in source_obj.constraints:
             target_constraint = target_obj.constraints.new(source_constraint.type)
@@ -596,12 +679,36 @@ def make_selection_editable(
                 for target in source_constraint.targets:
                     target_copy = target_constraint.targets.new()
                     # only copy target if we found the realized object in the map
-                    if target.target in instanced_to_realized_name_map:
+                    if copy_between_realized_objects:
+                        target_copy.target = target.target
+                        target_copy.subtarget = target.subtarget
+                    elif target.target in instanced_to_realized_name_map:
                         # We need to get the object from the data, so it is the realized copy and not the original
                         target_copy.target = instanced_to_realized_name_map[target.target]
                         # subtarget is a string, so we can just copy it safely
                         target_copy.subtarget = target.subtarget
                     target_copy.weight = target.weight
+
+        if unconstrained_world_matrix is not None:
+            context.view_layer.update()
+            doubled_world_matrix = target_obj.matrix_world.copy()
+            constrain_transform_delta = doubled_world_matrix @ unconstrained_world_matrix.inverted()
+            target_obj.matrix_world = (
+                constrain_transform_delta.inverted() @ unconstrained_world_matrix
+            )
+            context.view_layer.update()
+
+        if source_obj.animation_data is not None and source_obj.animation_data.action is not None:
+            assert (
+                target_obj.animation_data is None
+            ), "Realized instance should not have animation data yet"
+            anim_data = target_obj.animation_data_create()
+            source_anim_data = source_obj.animation_data
+            anim_data.action = source_anim_data.action
+            # Blender 4.4 split actions into slots, before that the action alone carried the
+            # animation and assigning it is all it takes.
+            if bpy.app.version >= (4, 4, 0):
+                anim_data.action_slot = source_anim_data.action_slot
 
         # in source_obj.children, the Meshes are missing, let's add them from source_obj.instance_collection.all_objects
         source_obj_children = list(source_obj.children)
@@ -610,13 +717,49 @@ def make_selection_editable(
                 if source_child.type == 'MESH':
                     source_obj_children.append(source_child)
 
-        source_obj_children = sorted(source_obj_children, key=lambda x: x.name)
-        target_obj_children = sorted(target_obj.children, key=lambda x: x.name)
+        # Match children by name instead of pairing by sorted position, 'source_obj_children'
+        # and 'target_obj.children' can differ in length/order (e.g. 'instance_collection.all_objects'
+        # pulls in mesh descendants recursively), which would otherwise silently pair unrelated objects.
+        target_children_by_name: dict[str, list[bpy.types.Object]] = collections.defaultdict(list)
+        for target_child in sorted(target_obj.children, key=lambda x: x.name):
+            target_children_by_name[
+                utils_bpy.remove_object_duplicate_suffix(target_child.name)
+            ].append(target_child)
 
-        for source_child, target_child in zip(source_obj_children, target_obj_children):
-            copy_constraints_from_instance_to_realized(
+        for source_child in sorted(source_obj_children, key=lambda x: x.name):
+            source_child_name = utils_bpy.remove_object_duplicate_suffix(source_child.name)
+            candidates = target_children_by_name.get(source_child_name, [])
+            if len(candidates) == 0:
+                continue
+            target_child = candidates.pop(0)
+            copy_animations_and_constraints_from_instance_to_realized(
                 source_child, target_child, instanced_to_realized_name_map
             )
+
+    def remove_unnecessary_empties(obj: bpy.types.Object) -> None:
+        """Removes unnecessary empties from the hierarchy of 'obj'.
+
+        Unnecessary empties are empties without instance collection and with only one child.
+        """
+        for child in obj.children:
+            if (
+                child.type == 'EMPTY'
+                and child.instance_collection is None
+                and len(child.children) == 1
+            ):
+                nested_child = child.children[0]
+                child_matrix = nested_child.matrix_world.copy()
+                nested_child.parent = obj
+                nested_child.matrix_world = child_matrix
+                copy_animations_and_constraints_from_instance_to_realized(
+                    child, nested_child, {}, True
+                )
+                name = child.name
+                bpy.data.objects.remove(child)
+                nested_child.name = name
+
+        for child in obj.children:
+            remove_unnecessary_empties(child)
 
     def get_instance_object_to_realized_object_map(
         root: bpy.types.Object, instance_collection: bpy.types.Collection
@@ -626,16 +769,41 @@ def make_selection_editable(
         During realization of instanced objects, duplicate suffixes might be added.
         The original names are obtained by removing the duplicate suffixes from the realized names.
         We rely on the original assets having no duplicate suffixes in their names.
+
+        Nested instance collections (assets held inside the primary linked collection) are
+        also scanned so that their objects appear in the map and bone parenting can be restored
+        for them too. duplicates_make_real realizes nested instances recursively, but their
+        objects are not in instance_collection.all_objects.
         """
+
+        def collect_source_objects(
+            collection: bpy.types.Collection,
+            result: dict[str, bpy.types.Object],
+        ) -> None:
+            """Populate result with two keys per object: its exact name and its suffix-stripped name.
+
+            setdefault is used so that when two objects share the same base name (e.g. 'Bone' and
+            'Bone.001'), the first one wins the stripped key while each still has its own exact key.
+            Nested instance collections are walked recursively so their objects are included too.
+            """
+            for obj in collection.all_objects:
+                result.setdefault(obj.name, obj)
+                result.setdefault(utils_bpy.remove_object_duplicate_suffix(obj.name), obj)
+                if obj.instance_type == 'COLLECTION' and obj.instance_collection is not None:
+                    collect_source_objects(obj.instance_collection, result)
+
+        all_source_objects: dict[str, bpy.types.Object] = {}
+        collect_source_objects(instance_collection, all_source_objects)
+
         instance_object_to_realized_map = {}
 
         for realized_obj in get_entire_object_hierarchy(root):
             suffixed_name = realized_obj.name
             clean_name = utils_bpy.remove_object_duplicate_suffix(suffixed_name)
 
-            instance_obj = instance_collection.all_objects.get(suffixed_name, None)
+            instance_obj = all_source_objects.get(suffixed_name, None)
             if instance_obj is None:
-                instance_obj = instance_collection.all_objects.get(clean_name, None)
+                instance_obj = all_source_objects.get(clean_name, None)
 
             # This can happen if the asset contains object with duplicate suffix in its name,
             # or if the asset contains instanced objects. Some features might not work correctly,
@@ -662,6 +830,11 @@ def make_selection_editable(
         obj_name for obj_name in selected_objects_names if obj_name in bpy.data.objects
     ]
 
+    # Maps realized object name to (realized armature, bone_name).
+    # Keyed by name (not object ref) so the lookup survives remove_unnecessary_empties,
+    # which may delete an empty and rename its promoted child to the same name.
+    bone_parent_registry: dict[str, tuple[bpy.types.Object, str]] = {}
+
     clear_selection(context)
     for instance_object, _, _, _ in instanced_collection_objects.values():
         # Operator duplicates_make_real converts each instance collection to empty (base parent) and its contents,
@@ -682,6 +855,15 @@ def make_selection_editable(
 
     for obj, instance_collection, parent_name, prev_color in instanced_collection_objects.values():
         assert obj is not None
+
+        instance_to_realized_map = get_instance_object_to_realized_object_map(
+            obj, instance_collection
+        )
+        for src_obj, realized_obj in instance_to_realized_map.items():
+            if src_obj.parent_type == 'BONE' and src_obj.parent is not None:
+                realized_parent = instance_to_realized_map.get(src_obj.parent)
+                if realized_parent is not None:
+                    bone_parent_registry[realized_obj.name] = (realized_parent, src_obj.parent_bone)
 
         for child in obj.children:
             set_object_empties_size(child, obj.empty_display_size)
@@ -714,29 +896,36 @@ def make_selection_editable(
                     child_source_name in instance_collection.objects
                     and instance_collection.objects[child_source_name].parent is not None
                 ):
+                    source_child = instance_collection.objects[child_source_name]
                     # set parent_type from source blend, for example our _Lights need to have parent_type = 'BONE'
-                    child.parent_type = instance_collection.objects[child_source_name].parent_type
+                    child.parent_type = source_child.parent_type
+                    if child.parent_type == 'BONE':
+                        bone_parent_registry[child.name] = (parent, source_child.parent_bone)
                 child.matrix_world = child_matrix
+                # Transfer obj constraints and animation actions to each child before the obj is
+                # removed, otherwise they would be lost.
+                copy_animations_and_constraints_from_instance_to_realized(obj, child, {}, True)
             bpy.data.objects.remove(obj)
             continue
 
-        instance_to_realized_map = get_instance_object_to_realized_object_map(
-            obj, instance_collection
-        )
         realized_to_instance_map = {r: i for i, r in instance_to_realized_map.items()}
         for child in obj.children:
-            # Blender operator duplicates_make_real doesn't append object constraints.
-            # Thus we have to copy those constraints manually.
+            # Blender operator duplicates_make_real doesn't append object constraints and animations
+            # We have to copy them manually
             original = realized_to_instance_map.get(child)
             if original is None:
                 logger.warning(
-                    f"Failed to find realized object for '{child.name}', skipping constraints copy"
+                    f"Failed to find realized object for '{child.name}', "
+                    f"skipping constraints and animation copy"
                 )
                 continue
             if not is_polygoniq_object(child):
                 continue
-            copy_constraints_from_instance_to_realized(original, child, instance_to_realized_map)
+            copy_animations_and_constraints_from_instance_to_realized(
+                original, child, instance_to_realized_map
+            )
 
+        remove_unnecessary_empties(obj)
         if delete_base_empty:
             if len(obj.children) > 1:
                 # instanced collection contained multiple top-level objects, keep base empty as container
@@ -745,7 +934,6 @@ def make_selection_editable(
                     obj.name = splitted_name[1]
                 # empty parent newly created in duplicates_make_real does not have polygoniq custom properties
                 copy_polygoniq_custom_props_from_children(obj)
-
             else:
                 # remove the parent from children which were not reparented above
                 # if they were reparented they are no longer in obj.children and we can
@@ -758,6 +946,23 @@ def make_selection_editable(
                     # was removed
                     child.matrix_world = child_matrix
                 bpy.data.objects.remove(obj)
+
+    # Restore bone parenting destroyed by duplicates_make_real.
+    for obj_name, (realized_parent, bone_name) in bone_parent_registry.items():
+        realized_obj = bpy.data.objects.get(obj_name)
+        if realized_obj is None:
+            continue
+        if (
+            realized_obj.parent_type == 'BONE'
+            and realized_obj.parent is realized_parent
+            and realized_obj.parent_bone == bone_name
+        ):
+            continue  # already correct
+        world_matrix = realized_obj.matrix_world.copy()
+        realized_obj.parent = realized_parent
+        realized_obj.parent_type = 'BONE'
+        realized_obj.parent_bone = bone_name
+        realized_obj.matrix_world = world_matrix
 
     selected_objects = []
     for obj_name in selected_objects_names:
@@ -774,6 +979,12 @@ def make_selection_editable(
         )
         # Create copy of armature data shared with other objects or linked from library
         make_datablocks_unique_per_object(obj, get_armatures_to_objects_map, "data")
+        # Create copy of light data shared with other objects or linked from library
+        make_datablocks_unique_per_object(obj, get_lights_to_objects_map, "data")
+        # Create copy of animation actions shared with other objects or linked from library
+        make_datablocks_unique_per_object(
+            obj, get_actions_to_animation_data_map, "action", assign_action_keep_slot
+        )
         # Make auto smooth modifier local to the object, so objects don't disappear when the modifier
         # is missing.
         try_make_auto_smooth_modifier_local(obj)
@@ -793,6 +1004,17 @@ def make_selection_editable(
         if keep_selection:
             selected_objects.append(obj_name)
             obj.select_set(True)
+
+        for hierarchy_obj in get_hierarchy(obj):
+            # Due to a bug in Blender while converting boolean inputs we reassign the modifier node
+            # group when spawning. The bug happens when object with modifiers is appended from a blend
+            # file, where the modifier node group is linked from a different file. First append is
+            # correct, but any subsequently appended object with the same modifier triggers the:
+            # 'Property type does not match input socket (NAME)' error and can make some setups not work
+            # Issue link: https://projects.blender.org/blender/blender/issues/110825
+            for mod in hierarchy_obj.modifiers:
+                if mod.type == 'NODES':
+                    mod.node_group = mod.node_group
 
     if keep_active and prev_active_object_name is not None:
         if prev_active_object_name in bpy.data.objects:

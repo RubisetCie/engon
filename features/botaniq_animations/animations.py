@@ -32,6 +32,9 @@ from ... import preferences
 from ... import asset_helpers
 from ... import asset_registry
 
+if typing.TYPE_CHECKING:
+    from bpy._typing import rna_enums
+
 logger = logging.getLogger(f"polygoniq.{__name__}")
 
 MODULE_CLASSES: list[type] = []
@@ -56,6 +59,29 @@ LOOPING_STACK_STATUS = [('CYCLES', True), ('GENERATOR', False), ('NOISE', False)
 # 4) Envelope to multiply the individual FCurve strength in the UI
 # 5) Limits to disable the FCurve entirely
 WIND_ANIMATION_FCURVE_UI_MODS = ['ENVELOPE', 'LIMITS']
+BOTANIQ_ANIMATION_MODIFIERS = {
+    "bq_bend_global",
+    "bq_displace_noise",
+    "bq_branch-group_1",
+    "bq_branch-group_2",
+    "bq_branch-group_3",
+    "bq_branch-group_4",
+    "bq_uv-warp-leaves",
+    "bq_displace_leaves",
+    "bq_uv-warp-leaves-reset",
+    "bq_displace_random-branch-movement",
+    "bq_displace_random-palm-branch-movement",
+    "bq_displace_minor-noise",
+    "bq_uv-warp-branches",
+    "bq_displace_branches",
+    "bq_uv-warp-branches-reset",
+    "bq_vertex-weight-edit",
+}
+
+MODIFIER_NAMES_KEPT_BEFORE_ANIMATION = {
+    asset_helpers.BQ_MASK_BRANCHES_NODE_GROUP_NAME,
+    asset_helpers.BQ_MASK_LEAVES_NODE_GROUP_NAME,
+}
 
 
 def get_animation_library_path() -> str:
@@ -152,15 +178,20 @@ def get_animation_state_control_modifiers(
     """
     control_modifiers = set()
     fcurves = polib.utils_bpy.get_fcurves_from_action(action)
+    if fcurves is None:
+        return control_modifiers
+
     for fcurve in fcurves:
-        modifier_name = infer_modifier_from_data_path(fcurve.data_path)
-        if modifier_name is None:
+        if not is_bq_animation_fcurve(fcurve):
+            continue
+        if len(fcurve.modifiers) == 0:
             continue
 
         fcurve_mod = fcurve.modifiers[-1]
         if fcurve_mod.type != 'LIMITS':
             continue
 
+        modifier_name = infer_modifier_from_data_path(fcurve.data_path)
         control_modifiers.add((modifier_name, fcurve_mod))
 
     return control_modifiers
@@ -273,11 +304,23 @@ def copy_modifiers(source: bpy.types.Object, target: bpy.types.Object) -> None:
 
     Having the original modifiers at the end guarantees there is no unnecessary evaluation of data,
     i.e. evaluating animation after Subdivision Surface modifier.
+
+    Modifiers matching MODIFIER_NAMES_KEPT_BEFORE_ANIMATION are the exception - they are moved back
+    before the animation modifiers, preserving their relative order.
     """
     for mod in reversed(source.modifiers):
         # Use context override so we don't have to link source object to scene and mess with selection
         with bpy.context.temp_override(object=source, selected_objects=[target]):
             bpy.ops.object.modifier_copy_to_selected(modifier=mod.name)
+        with bpy.context.temp_override(object=target):
+            bpy.ops.object.modifier_move_to_index(modifier=mod.name, index=0)
+
+    kept_before_animation_mods = [
+        mod
+        for mod in target.modifiers
+        if any(mod.name.startswith(name) for name in MODIFIER_NAMES_KEPT_BEFORE_ANIMATION)
+    ]
+    for mod in reversed(kept_before_animation_mods):
         with bpy.context.temp_override(object=target):
             bpy.ops.object.modifier_move_to_index(modifier=mod.name, index=0)
 
@@ -289,6 +332,11 @@ def copy_animation_data(source: bpy.types.Object, target: bpy.types.Object) -> b
         target.animation_data_create()
     assert target.animation_data is not None
     action_copy = source.animation_data.action.copy()
+    old_action = target.animation_data.action
+    if old_action is not None:
+        # Don't lose user-defined animation that was already on 'target' before we swap in the
+        # freshly copied bq action.
+        preserve_non_bq_fcurves(old_action, action_copy)
     target.animation_data.action = action_copy
     # Force assign an action to a slot. In blender 4.4+ slots were introduced and in some cases
     # assigning an action fails to auto-assign a slot. We force assign a slot to prevent leaving
@@ -347,12 +395,99 @@ def copy_driving_empties(
 
 def is_bq_animation_modifier(modifier: bpy.types.Modifier) -> bool:
     assert modifier is not None
-    return modifier.name.startswith("bq_")
+    return any(modifier.name.startswith(name) for name in BOTANIQ_ANIMATION_MODIFIERS)
+
+
+def is_bq_animation_fcurve(fcurve: bpy.types.FCurve) -> bool:
+    """Returns True if 'fcurve' drives a bq animation modifier."""
+    modifier_name = infer_modifier_from_data_path(fcurve.data_path)
+    if modifier_name is None:
+        return False
+    return any(modifier_name.startswith(name) for name in BOTANIQ_ANIMATION_MODIFIERS)
 
 
 def is_bq_animation_action(action: bpy.types.Action) -> bool:
+    """Returns True if any of the action's FCurves drives a bq animation modifier."""
     assert action is not None
-    return action.name.startswith("bq_")
+    fcurves = polib.utils_bpy.get_fcurves_from_action(action)
+    if fcurves is None:
+        return False
+
+    return any(is_bq_animation_fcurve(fcurve) for fcurve in fcurves)
+
+
+def remove_bq_animation_fcurves(action: bpy.types.Action) -> None:
+    """Removes FCurves driving bq animation modifiers from 'action', keeping any other
+    user-defined FCurves that happen to live in the same action untouched.
+    """
+    assert action is not None
+    fcurves = polib.utils_bpy.get_fcurves_from_action(action)
+    if fcurves is None:
+        return
+
+    for fcurve in list(fcurves):
+        if is_bq_animation_fcurve(fcurve):
+            fcurves.remove(fcurve)
+
+
+def copy_fcurve(
+    fcurve: bpy.types.FCurve,
+    target_fcurves,  # TODO: add type hint after dropping Blender < 5.0 support
+) -> bpy.types.FCurve:
+    """Copies keyframes, handles and FCurve modifiers of 'fcurve' into 'target_fcurves'."""
+    group_name = fcurve.group.name if fcurve.group is not None else ""
+    if bpy.app.version < (5, 0, 0):
+        new_fcurve = target_fcurves.new(
+            fcurve.data_path,
+            index=fcurve.array_index,
+            action_group=group_name,
+        )
+    else:
+        new_fcurve = target_fcurves.new(
+            fcurve.data_path,
+            index=fcurve.array_index,
+            group_name=group_name,
+        )
+    new_fcurve.keyframe_points.add(len(fcurve.keyframe_points))
+    for src_keyframe, dst_keyframe in zip(fcurve.keyframe_points, new_fcurve.keyframe_points):
+        dst_keyframe.co = src_keyframe.co
+        dst_keyframe.handle_left = src_keyframe.handle_left
+        dst_keyframe.handle_right = src_keyframe.handle_right
+        dst_keyframe.handle_left_type = src_keyframe.handle_left_type
+        dst_keyframe.handle_right_type = src_keyframe.handle_right_type
+        dst_keyframe.interpolation = src_keyframe.interpolation
+        dst_keyframe.easing = src_keyframe.easing
+
+    for src_modifier in fcurve.modifiers:
+        dst_modifier = new_fcurve.modifiers.new(src_modifier.type)
+        for prop in src_modifier.bl_rna.properties:
+            if prop.is_readonly:
+                continue
+            setattr(dst_modifier, prop.identifier, getattr(src_modifier, prop.identifier))
+
+    new_fcurve.update()
+    return new_fcurve
+
+
+def preserve_non_bq_fcurves(old_action: bpy.types.Action, new_action: bpy.types.Action) -> None:
+    """Copies FCurves from 'old_action' that don't drive a bq animation modifier into
+    'new_action', so user-defined animation isn't lost when 'new_action' replaces 'old_action'.
+    """
+    old_fcurves = polib.utils_bpy.get_fcurves_from_action(old_action)
+    new_fcurves = polib.utils_bpy.get_fcurves_from_action(new_action)
+    if old_fcurves is None or new_fcurves is None:
+        return
+
+    # 'old_action' and 'new_action' can already share FCurves, e.g. when 'target' was duplicated
+    # from 'source' via Object.copy(), which doesn't duplicate the action - only its reference.
+    existing_fcurve_keys = {(fcurve.data_path, fcurve.array_index) for fcurve in new_fcurves}
+
+    for fcurve in old_fcurves:
+        if is_bq_animation_fcurve(fcurve):
+            continue
+        if (fcurve.data_path, fcurve.array_index) in existing_fcurve_keys:
+            continue
+        copy_fcurve(fcurve, new_fcurves)
 
 
 def has_6_6_or_older_action(obj: bpy.types.Object) -> bool:
@@ -383,7 +518,7 @@ def is_animated(obj: bpy.types.Object) -> bool:
     if obj.animation_data.action is None:
         return False
 
-    return obj.animation_data.action.name.startswith("bq_")
+    return is_bq_animation_action(obj.animation_data.action)
 
 
 def is_animated_muted(obj: bpy.types.Object) -> bool:
@@ -621,6 +756,11 @@ def change_preset(
 
     new_action = preset_action.copy()
     assert obj.animation_data is not None
+    old_action = obj.animation_data.action
+    if old_action is not None:
+        # Don't lose user-defined animation that may have been added to 'old_action' while it
+        # was the object's active action.
+        preserve_non_bq_fcurves(old_action, new_action)
     obj.animation_data.action = new_action
     # Force assign an action to a slot. In blender 4.4+ slots were introduced and in some cases
     # assigning an action fails to auto-assign a slot. We force assign a slot to prevent leaving
@@ -655,7 +795,9 @@ class AnimationOperatorBase(bpy.types.Operator):
             raise ValueError(f"Unknown selection target '{wind_properties.operator_target}'")
         return target_objects
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         return context.window_manager.invoke_props_dialog(self)
 
     def draw(self, context: bpy.types.Context) -> None:
@@ -677,7 +819,7 @@ class AnimationAddWind(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
-    def poll(cls, context):
+    def poll(cls, context: bpy.types.Context) -> bool:
         if context.mode != 'OBJECT':
             return False
         if not context.selected_objects:
@@ -700,10 +842,12 @@ class AnimationAddWind(bpy.types.Operator):
 
         return False
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         return context.window_manager.invoke_props_dialog(self)
 
-    def draw(self, context: bpy.types.Context):
+    def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
         layout.use_property_split = True
         props = preferences.prefs_utils.get_preferences(
@@ -747,10 +891,8 @@ class AnimationAddWind(bpy.types.Operator):
             )
             return False
 
-        if obj.animation_data is not None:
-            self.report(
-                {'INFO'}, f"{obj.name} already contains animation data. Remove the animation data."
-            )
+        if is_animated(obj):
+            self.report({'INFO'}, f"{obj.name} already contains botaniq animation.")
             return False
 
         if not asset_helpers.is_obj_with_engon_feature(obj, "botaniq"):
@@ -898,6 +1040,7 @@ class AnimationAddWind(bpy.types.Operator):
         assert modifier_container is not None
         fps = get_scene_fps(context.scene.render.fps, context.scene.render.fps_base)
         fps_adjusted_interval = get_scene_fps_adjusted_interval(fps)
+        helper_obj_names = load_helper_object_names(animation_library_path)
 
         for obj in objs:
             copy_modifiers(modifier_container, obj)
@@ -920,9 +1063,7 @@ class AnimationAddWind(bpy.types.Operator):
             change_preset(obj, DEFAULT_PRESET, DEFAULT_WIND_STRENGTH, animation_library_path)
             # Adjust the frame interval to scene fps to maintain default speed
             set_animation_frame_range(obj, fps, fps_adjusted_interval)
-            helper_objs = get_animated_objects_hierarchy(
-                obj, load_helper_object_names(animation_library_path)
-            )
+            helper_objs = get_animated_objects_hierarchy(obj, helper_obj_names)
             change_anim_style(obj, helper_objs, botaniq_animations.WindStyle.PROCEDURAL)
 
             animated_object_names.append(obj.name)
@@ -956,7 +1097,7 @@ class AnimationAddWind(bpy.types.Operator):
             "please remove old animation and re-apply new from the Animations panel.",
         )
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         prefs = preferences.prefs_utils.get_preferences(context).botaniq_animations_preferences
         props = prefs.wind_anim_properties
         selected_objects = context.selected_objects
@@ -1110,19 +1251,24 @@ class AnimationRemoveWind(bpy.types.Operator):
         if root_obj.animation_data is None:
             return
 
-        # don't remove user defined animation
-        # remove animations with:
-        #   no action
-        #   action from botaniq 6.7+ (gets picked up by is_bq_animation_action())
-        #   action from older botaniq (action starts with bqa_)
-        if (
-            root_obj.animation_data.action is None
-            or is_bq_animation_action(root_obj.animation_data.action)
-            or root_obj.animation_data.action.name.startswith("bqa_")
-        ):
+        action = root_obj.animation_data.action
+        if action is None:
+            return
+
+        # action from older botaniq (starts with bqa_) is entirely bq-owned, remove it whole
+        if action.name.startswith("bqa_"):
+            root_obj.animation_data_clear()
+            return
+
+        # don't remove user defined FCurves that happen to live in the same action -
+        # only remove the FCurves driving bq animation modifiers
+        remove_bq_animation_fcurves(action)
+
+        fcurves = polib.utils_bpy.get_fcurves_from_action(action)
+        if fcurves is None or len(fcurves) == 0:
             root_obj.animation_data_clear()
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         animation_library_path = get_animation_library_path()
 
         removed_animation_object_names = []
@@ -1173,7 +1319,7 @@ class AnimationMute(AnimationOperatorBase):
         layout.prop_tabs_enum(self, "action")
         super().draw(context)
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         animation_library_path = get_animation_library_path()
 
         target_objects = AnimationMute.get_target_objects(context)
@@ -1233,7 +1379,7 @@ class AnimationApplyStrength(AnimationOperatorBase):
     bl_description = "Applies specified value of strength to selected objects"
     bl_options = {'REGISTER', 'UNDO'}
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         wind_properties = preferences.prefs_utils.get_preferences(
             context
         ).botaniq_animations_preferences.wind_anim_properties
@@ -1260,7 +1406,7 @@ class AnimationApplyPreset(AnimationOperatorBase):
     bl_description = "Applies specified preset to selected objects"
     bl_options = {'REGISTER', 'UNDO'}
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         wind_properties = preferences.prefs_utils.get_preferences(
             context
         ).botaniq_animations_preferences.wind_anim_properties
@@ -1294,7 +1440,7 @@ class AnimationApplyLoop(AnimationOperatorBase):
     bl_description = "Applies looping interval on animated objects"
     bl_options = {'REGISTER', 'UNDO'}
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         wind_properties = preferences.prefs_utils.get_preferences(
             context
         ).botaniq_animations_preferences.wind_anim_properties
@@ -1308,8 +1454,13 @@ class AnimationApplyLoop(AnimationOperatorBase):
         )
 
         fps = get_scene_fps(context.scene.render.fps, context.scene.render.fps_base)
+        helper_obj_names = load_helper_object_names(get_animation_library_path())
         for obj in animated_objects:
             set_animation_frame_range(obj, fps, loop_value)
+
+            helper_objs = get_animated_objects_hierarchy(obj, helper_obj_names)
+            for helper_obj in helper_objs:
+                set_animation_frame_range(helper_obj, fps, loop_value)
 
         return {'FINISHED'}
 
@@ -1347,7 +1498,7 @@ class AnimationSetAnimStyle(AnimationOperatorBase):
         layout.prop_tabs_enum(self, "style")
         super().draw(context)
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         animation_library_path = get_animation_library_path()
 
         if self.style not in {
@@ -1360,11 +1511,10 @@ class AnimationSetAnimStyle(AnimationOperatorBase):
 
         target_objects = AnimationOperatorBase.get_target_objects(context)
         animated_objects = list(get_animated_objects(target_objects))
+        helper_object_names = load_helper_object_names(animation_library_path)
         logger.info(f"Working with objects {[obj.name for obj in animated_objects]}")
         for obj in animated_objects:
-            helper_objs = get_animated_objects_hierarchy(
-                obj, load_helper_object_names(animation_library_path)
-            )
+            helper_objs = get_animated_objects_hierarchy(obj, helper_object_names)
             change_anim_style(obj, helper_objs, self.style)
 
         return {'FINISHED'}
@@ -1380,7 +1530,7 @@ class AnimationSetFrames(bpy.types.Operator):
     bl_description = "Sets scene frames according to looping parameter"
     bl_options = {'REGISTER', 'UNDO'}
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         wind_properties = preferences.prefs_utils.get_preferences(
             context
         ).botaniq_animations_preferences.wind_anim_properties
@@ -1430,7 +1580,7 @@ class AnimationRandomizeOffset(AnimationOperatorBase):
                     if modifier.type == 'NOISE':
                         modifier.offset += random_offset
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         target_objects = AnimationOperatorBase.get_target_objects(context)
         animated_objects = list(get_animated_objects(target_objects))
         logger.info(f"Working with objects {[obj.name for obj in animated_objects]}")
@@ -1521,7 +1671,7 @@ class AnimationMakeInstanced(bpy.types.Operator):
 
         return new_instance_coll, instance_obj
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         active_object = context.active_object
         logger.info(f"Working with object {active_object.name}")
         AnimationMakeInstanced.wrap_to_instance_collection(context, active_object)
@@ -1577,7 +1727,7 @@ class AnimationMakeInstanceUnique(bpy.types.Operator):
         polib.asset_pack_bpy.collection_link_hierarchy(new_collection, new_object)
         return new_collection
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         active_object = context.active_object
         instance_collection: bpy.types.Collection = active_object.instance_collection
         if instance_collection is None or len(instance_collection.objects) == 0:
@@ -1617,21 +1767,23 @@ class AnimationBake(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
-    def poll(cls, context: bpy.types.Context):
+    def poll(cls, context: bpy.types.Context) -> bool:
         return (
             context.mode == 'OBJECT'
             and context.active_object is not None
             and is_animated(context.active_object)
         )
 
-    def draw(self, context: bpy.types.Context):
+    def draw(self, context: bpy.types.Context) -> None:
         # TODO: calculate approx. file size
         self.layout.label(text=f"File size may be large, continue?")
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set["rna_enums.OperatorReturnItems"]:
         return context.window_manager.invoke_props_dialog(self, width=600)
 
-    def execute(self, context: bpy.types.Context):
+    def execute(self, context: bpy.types.Context) -> set["rna_enums.OperatorReturnItems"]:
         animation_library_path = get_animation_library_path()
 
         wind_properties = preferences.prefs_utils.get_preferences(

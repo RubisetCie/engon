@@ -10,7 +10,6 @@ import typing
 
 from . import ui_bpy
 
-
 CustomAttributeValueType = typing.Union[
     str,
     bool,
@@ -40,6 +39,9 @@ class CustomPropertyNames:
     TQ_BUMPS = "tq_bumps"
     # traffiq_paint feature
     TQ_PRIMARY_COLOR = "tq_primary_color"
+    TQ_SECONDARY_COLOR = "tq_secondary_color"
+    TQ_TERTIARY_COLOR = "tq_tertiary_color"
+    TQ_QUATERNARY_COLOR = "tq_quaternary_color"
     TQ_FLAKES_AMOUNT = "tq_flakes_amount"
     TQ_CLEARCOAT = "tq_clearcoat"
     # traffiq_lights feature
@@ -77,11 +79,15 @@ class CustomPropertyNames:
     PQ_PICTORIAL_ADJUSTMENT_SATURATION = "pq_pictorial_adjustment_saturation"
     PQ_PICTORIAL_ADJUSTMENT_VALUE = "pq_pictorial_adjustment_value"
     # colorize_feature
+    PQ_PRIMARY_SECONDARY_SWITCH = "pq_primary_secondary_switch"
     PQ_PRIMARY_COLOR = "pq_primary_color"
     PQ_PRIMARY_COLOR_FACTOR = "pq_primary_color_factor"
     PQ_SECONDARY_COLOR = "pq_secondary_color"
     PQ_SECONDARY_COLOR_FACTOR = "pq_secondary_color_factor"
-    PQ_PRIMARY_SECONDARY_SWITCH = "pq_primary_secondary_switch"
+    PQ_TERTIARY_COLOR = "pq_tertiary_color"
+    PQ_TERTIARY_COLOR_FACTOR = "pq_tertiary_color_factor"
+    PQ_QUATERNARY_COLOR = "pq_quaternary_color"
+    PQ_QUATERNARY_COLOR_FACTOR = "pq_quaternary_color_factor"
     # light_adjustment feature
     PQ_LIGHT_USE_RGB = "pq_light_use_rgb"
     PQ_LIGHT_KELVIN = "pq_light_kelvin"

@@ -67,7 +67,7 @@ class CurveScatterPanel(
             emboss=False,
         ).engon_feature_name = self.__class__.feature_name
 
-    def draw(self, context: bpy.types.Context):
+    def draw(self, context: bpy.types.Context) -> None:
         layout: bpy.types.UILayout = self.layout
         if self.conditionally_draw_warning_no_adjustable_active_object(context, layout):
             return
